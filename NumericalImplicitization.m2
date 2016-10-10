@@ -1,7 +1,7 @@
 newPackage("NumericalImplicitization",
     Headline => "NumericalImplicitization",
     Version => "1.0",
-    Date => "June 29, 2016",
+    Date => "October 10, 2016",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen@math.berkeley.edu",
@@ -964,6 +964,7 @@ assert(numericalImageDegree(F,I) == 18)
 end--
 
 restart
+needsPackage "NumericalImplicitization"
 loadPackage("NumericalImplicitization", Reload => true)
 uninstallPackage "NumericalImplicitization"
 installPackage "NumericalImplicitization"
