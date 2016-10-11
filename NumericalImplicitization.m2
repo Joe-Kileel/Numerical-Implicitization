@@ -1,7 +1,7 @@
 newPackage("NumericalImplicitization",
     Headline => "NumericalImplicitization",
     Version => "1.0",
-    Date => "October 10, 2016",
+    Date => "October 11, 2016",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen@math.berkeley.edu",
@@ -152,7 +152,7 @@ numericalHilbertFunction (List, Ideal, List, ZZ) := NumericalInterpolationTable 
 	sampleImagePoints = apply(sampleImagePoints, p -> {append(p#Coordinates, 1_(coefficientRing ring I))});
     );
     y := symbol y;
-    allMonomials := basis(d, (coefficientRing ring I)[y_1..y_(#F)]);
+    allMonomials := basis(d, (coefficientRing ring I)[y_0..y_(#F-1)]);
     if #sampleImagePoints < numcols allMonomials then (
         if opts.verboseOutput then (
             print "Sampling image points ...";
@@ -940,16 +940,21 @@ setRandomSeed 0
 R = CC[s,t]
 F = flatten entries basis(3,R)
 J = monomialCurveIdeal(QQ[x_0..x_3], {1,2,3})
-assert(all(1..5, d -> numericalHilbertFunction(F,ideal 0_R,d) == numcols super basis(d,J)))
+assert(all(1..5, d -> (numericalHilbertFunction(F,ideal 0_R,d)).hilbertFunctionValue == numcols super basis(d,J)))
+W = numericalImageDegree(F, ideal 0_R);
+assert(W.imageDegree == 3)
+assert(isOnImage(W, numericalImageSample(F,ideal 0_R)) == true)
+assert(isOnImage(W, point random(CC^1,CC^#F)) == false)
 ///
 
 TEST /// -- Rational quartic curve in P^3
 setRandomSeed 0
 R = CC[s,t]
 F = flatten entries basis(4, R) - set{s^2*t^2}
-h5 = numcols basis(5, ker map(QQ[s,t], QQ[x,y,z,w], {s^4,s^3*t,s*t^3,t^4}))
-assert(numericalHilbertFunction(F, ideal(0_R), 5) == h5)
-elapsedTime numericalHilbertFunction(F,ideal 0_R,10)
+h3 = numcols basis(3, ker map(QQ[s,t], QQ[x,y,z,w], {s^4,s^3*t,s*t^3,t^4}))
+T = numericalHilbertFunction(F, ideal 0_R, 3);
+assert(T.hilbertFunctionValue == h3)
+assert(toString extractImageEquations(T, attemptExact => true) == "matrix {{y_1*y_2*y_3-y_0*y_3^2}, {y_2^3-y_1*y_3^2}, {y_1*y_2^2-y_0*y_2*y_3}, {y_0*y_2^2-y_1^2*y_3}, {y_1^2*y_2-y_0*y_1*y_3}, {y_0*y_1*y_2-y_0^2*y_3}, {y_1^3-y_0^2*y_2}}")
 ///
 
 TEST /// -- random canonical curve of genus 4, under random projection to P^2 by cubics
@@ -957,7 +962,9 @@ setRandomSeed 0
 R = CC[x_0..x_3]
 I = ideal(random(2,R),random(3,R))
 F = toList(1..3)/(i -> random(3,R))
-assert(numericalImageDegree(F,I) == 18)
+assert((numericalImageDegree(F,I)).imageDegree == 18)
+S = numericalImageSample(F,I,190);
+assert((numericalHilbertFunction(F,I,S,18)).hilbertFunctionValue == 1)
 ///
 
 
