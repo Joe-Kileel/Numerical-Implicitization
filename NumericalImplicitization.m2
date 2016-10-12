@@ -516,8 +516,8 @@ doc ///
         Text
             The following example verifies part of the Alexander-Hirschowitz theorem: the 14th secant variety of the 4th Veronese of P^4 has affine dimension 69, rather than 70.
         Example
-            R = CC[a_(1,1)..a_(14,5)]
-            F = sum(1..14, i -> flatten entries basis(4, R, Variables=>toList(a_(i,1)..a_(i,5))));
+            R = CC[s_(1,1)..s_(14,5)]
+            F = sum(1..14, i -> flatten entries basis(4, R, Variables=>toList(s_(i,1)..s_(i,5))));
             time numericalImageDim(F, ideal 0_R)
 ///
 
@@ -563,11 +563,12 @@ doc ///
 	    the argument of the Hilbert function of F(V(I))
     Outputs
     	:NumericalInterpolationTable
-	    containing the number of linearly independent degree d forms in the ideal of the projective closure of F(V(I)), along with approximations of those forms
+	    containing an interpolation computation for the number of linearly independent degree d forms in the ideal of the projective closure of F(V(I))
     Description
 	Text
 	    Computes values of the Hilbert function of the image of a variety, by numerical interpolation. This technique circumvents the calculation of the kernel of the associated ring map. @BR{}@ @BR{}@
-            In order to speed up computation, the list S of points can be precomputed (see @TO numericalImageSample@). This list of points can then be re-used in multiple interpolation computations (which can yield a dramatic speedup over performing separate sampling instances, if the ideal I is not the zero ideal).
+            In order to speed up computation, the list S of points can be precomputed (see @TO numericalImageSample@). This list of points can then be re-used in multiple interpolation computations (which can yield a dramatic speedup over performing separate sampling instances, if the ideal I is not the zero ideal). @BR{}@ @BR{}@
+	    From the output of type @TO NumericalInterpolationTable@, one can find approximations to the degree d forms in the ideal of F(V(I)). See @TO extractImageEquations@.
         Example
             R = CC[x_(1,1)..x_(3,5)]
             F = (minors(3, genericMatrix(R, 3, 5)))_*;
@@ -575,6 +576,9 @@ doc ///
             numericalHilbertFunction(F, ideal 0_R, S, 2)
     SeeAlso
     	NumericalInterpolationTable
+	extractImageEquations
+    Caveat
+    	This method for computing Hilbert function values works best for low arguments d. For larger values of d, one may consider changing the option @TO SVDGapThreshold@ (e.g. SVDGapThreshold => 10) for more consistent results.
 ///
 
 doc ///
