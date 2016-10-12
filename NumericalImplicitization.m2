@@ -1,7 +1,7 @@
 newPackage("NumericalImplicitization",
     Headline => "NumericalImplicitization",
     Version => "1.0",
-    Date => "October 11, 2016",
+    Date => "October 12, 2016",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen@math.berkeley.edu",
@@ -165,7 +165,7 @@ numericalHilbertFunction (List, Ideal, List, ZZ) := NumericalInterpolationTable 
     ) else (
         interpolationMatrix = apply(toList(0..<numcols allMonomials), i -> {sub(allMonomials, matrix sampleImagePoints#i)});
     );
-    interpolationData := numericalNullity(interpolationMatrix, true, verboseOutput => opts.verboseOutput);
+    interpolationData := numericalNullity(interpolationMatrix, true, SVDGapThreshold => opts.SVDGapThreshold, verboseOutput => opts.verboseOutput);
     if opts.verboseOutput then print("Hilbert function value: " | first interpolationData);
     new NumericalInterpolationTable from {
         symbol hilbertFunctionArgument => d,
