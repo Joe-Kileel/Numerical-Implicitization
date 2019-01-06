@@ -436,7 +436,8 @@ isOnImage (PseudoWitnessSet, Point) := Boolean => opts -> (W, q) -> (
     newPullbackSliceData := randomCombinations(matrix{F}, #pullbackSlice, false);
     sliceCoefficients := first newPullbackSliceData;
     newPullbackSlice := last newPullbackSliceData;
-    newPullbackSlice = newPullbackSlice - flatten entries (sliceCoefficients * promote(transpose(q), coefficientRing(ring(I))));
+    newPullbackSlice = newPullbackSlice - flatten entries (promote(q, coefficientRing ring I) * sliceCoefficients);
+    -- newPullbackSlice = newPullbackSlice - flatten entries (sliceCoefficients * promote(transpose(q), coefficientRing(ring(I))));
     targetUpstairsPoints := smartTrack(squaredUpSource | fiberSlice | pullbackSlice, squaredUpSource | fiberSlice | newPullbackSlice, startUpstairsPoints, true, opts);
     imagePointTable := hashTable apply(numericalEval(F, targetUpstairsPoints, false), p -> round(opts.Threshold, p) => 0);
     imagePointTable#?(round(opts.Threshold, q))
