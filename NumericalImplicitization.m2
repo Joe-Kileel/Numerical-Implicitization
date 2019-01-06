@@ -1,14 +1,14 @@
 newPackage("NumericalImplicitization",
     Headline => "NumericalImplicitization",
-    Version => "1.0.3",
-    Date => "September 23, 2017",
+    Version => "1.0.5",
+    Date => "January 6, 2019",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen@math.berkeley.edu",
-         HomePage => "https://math.berkeley.edu/~jchen"},
+         HomePage => "https://people.math.gatech.edu/~jchen646"},
         {Name => "Joe Kileel",
 	 Email => "jkileel@princeton.edu",
-	 HomePage => "http://www.math.berkeley.edu/~jkileel"}
+	 HomePage => "https://web.math.princeton.edu/~jkileel/"}
         },
     PackageImports => {},
     PackageExports => {"NumericalAlgebraicGeometry"},
@@ -19,37 +19,34 @@ newPackage("NumericalImplicitization",
         "numericalSourceSample",
         "numericalImageSample",
         "numericalNullity",
-            "Precondition",
+        "Precondition",
         "numericalImageDim",
         "numericalHilbertFunction",
-            "IsGraded",
-	    -- "Threshold",
+        "IsGraded",
 	"NumericalInterpolationTable",
-	    "hilbertFunctionArgument",
-	    "hilbertFunctionValue",
-	    "imagePoints",
-	    "interpolationBasis",
-	    "interpolationSVD",
-            "interpolationMatrix",
+        "hilbertFunctionArgument",
+        "hilbertFunctionValue",
+        "imagePoints",
+        "interpolationBasis",
+        "interpolationSVD",
+        "interpolationMatrix",
 	"extractImageEquations",
 	"numericalImageDegree",
-	    "repeats",
-            "maxAttempts",
-            "traceThreshold",
-            -- "Threshold",
-            "maxThreads",
+        "repeats",
+        "maxAttempts",
+        "traceThreshold",
+        "maxThreads",
 	"PseudoWitnessSet",
-	    "isCompletePseudoWitnessSet",
-            -- "degree",
-	    "sourceEquations",
-            "sourceSlice",
-            "imageSlice",
-            "witnessPointPairs",
-            "traceTest",
-            -- "pairTable",
+        "isCompletePseudoWitnessSet",
+        "sourceEquations",
+        "sourceSlice",
+        "imageSlice",
+        "witnessPointPairs",
+        "traceTest",
 	"isOnImage",
         "numericalEval",
-        "numericalFiber"
+        "numericalFiber",
+        "multivariateHorner"
     }
 
 -- software options (none for sample nor refine): default is M2engine throughout
@@ -120,8 +117,9 @@ numericalDimensions (Thing, Ideal, Thing) := List => opts -> (F, I, p) -> ( --ou
     (F, I) = checkRings(F, I);
     if p === {} then p = numericalSourceSample(I, Software => opts.Software);
     p0 := 1/norm(2, matrix p)*(matrix p);
-    sourceJacobian := sub(transpose(jacobian(I)), p0);
     dF := sub(transpose(jacobian(matrix{F})), p0);
+    if I == 0 then return {#gens ring I, #gens ring I - numericalNullity(dF, false)};
+    sourceJacobian := sub(transpose(jacobian(I)), p0);
     sourceDim := numericalNullity(sourceJacobian, false);
     {sourceDim, sourceDim - numericalNullity(sourceJacobian || dF, false)}
 )
@@ -133,19 +131,28 @@ numericalImageDim (Thing, Ideal, Point) := ZZ => opts -> (F, I, p) -> last numer
 numericalImageDim (Thing, Ideal) := ZZ => opts -> (F, I) -> last numericalDimensions(F, I, opts)
 
 
+-- converts M to a list of 1-element lists of row matrices (to normalize rows easily)
+-- listForm satisfies M == matrix listForm M, and this conversion is fast
+listForm Matrix := A -> apply(entries A, r -> {matrix{r}})
+
+
+rowScale := (L, s) -> matrix flatten apply(L, r -> if r#0 == 0 then {} else {(s/norm(2,r#0))*r}) -- deletes any zero rows
+doubleScale := L -> transpose rowScale((entries transpose rowScale(L,1))/(r -> {matrix{r}}), sqrt(#L/(numcols(L#0#0))))
+
+
 numericalNullity = method(Options => {symbol Threshold => 1e4, Verbose => false, symbol Precondition => false})
-numericalNullity (List, Boolean) := List => opts -> (M, keepSVD) -> ( -- M is a list of 1-element lists of row matrices (to normalize rows easily)
+numericalNullity (List, Boolean) := List => opts -> (M, keepSVD) -> (
     if matrix M == 0 then return if keepSVD then {numcols M#0#0, 0} else numcols M#0#0;
     if opts.Verbose then (
-        A := matrix if opts.Precondition then (
+        A := if opts.Precondition then (
             print "Performing normalization preconditioning ...";
-            time apply(M, row -> if row#0 == 0 then row else (1/norm(2,row#0))*row)
-        ) else M;
+	    time doubleScale M
+        ) else matrix M;
 	print "Computing numerical kernel ...";
-	time (S, U, Vt) := SVD(A, DivideConquer => true);
+	time (S, U, Vt) := SVD A; -- do not use DivideConquer => true!
     ) else (
         A = matrix if opts.Precondition then apply(M, row -> if row#0 == 0 then row else (1/norm(2,row#0))*row) else M;
-        (S, U, Vt) = SVD(A, DivideConquer => true);
+        (S, U, Vt) = SVD A;
     );
     largestGap := (#S, opts.Threshold);
     for i from 1 to #S-1 do (
@@ -156,7 +163,7 @@ numericalNullity (List, Boolean) := List => opts -> (M, keepSVD) -> ( -- M is a 
     );
     if keepSVD then {numcols A - first largestGap, (S, U, Vt)} else numcols A - first largestGap
 )
-numericalNullity (Matrix, Boolean) := ZZ => opts -> (M, keepSVD) -> numericalNullity(apply(entries M, row -> {matrix{row}}), keepSVD, opts)
+numericalNullity (Matrix, Boolean) := ZZ => opts -> (M, keepSVD) -> numericalNullity(listForm M, keepSVD, opts)
 numericalNullity Matrix := ZZ => opts -> M -> numericalNullity(M, false, opts)
 
 
@@ -168,22 +175,21 @@ numericalHilbertFunction = method(Options => {
 numericalHilbertFunction (Thing, Ideal, List, ZZ) := NumericalInterpolationTable => opts -> (F, I, sampleImagePoints, d) -> ( --outputs a degree d interpolation table for F(V(I))
     (F, I) = checkRings(F, I, IsGraded => opts.IsGraded);
     if not opts.IsGraded then sampleImagePoints = apply(sampleImagePoints, p -> {append(p#Coordinates, 1_(coefficientRing ring I))});
-    local allMonomials, local N, local evalMons, local C, local A, local interpolationData;
     y := symbol y;
-    allMonomials = basis(d, (coefficientRing ring I)[y_0..y_(#F-1)]);
-    N = numcols allMonomials;
+    allMonomials := basis(d, (coefficientRing ring I)[y_0..y_(#F-1)]);
+    N := numcols allMonomials;
     if #sampleImagePoints < N then (
         if opts.Verbose then (
             print "Sampling image points ...";
             time sampleImagePoints = join(sampleImagePoints, numericalImageSample(F, I, N - #sampleImagePoints, Software => opts.Software));
         ) else sampleImagePoints = join(sampleImagePoints, numericalImageSample(F, I, N - #sampleImagePoints, Software => opts.Software));
     );
-    sampleImagePoints = apply(sampleImagePoints, p -> (C = matrix p; 1/norm(2, C)*C));
+    sampleImagePoints = apply(sampleImagePoints, p -> (C := matrix p; 1/norm(2,C)*C));
     if opts.Verbose then (
         print "Creating interpolation matrix ...";
-        time A = apply(sampleImagePoints, p -> {sub(allMonomials, p)});
+        time A := apply(sampleImagePoints, p -> {sub(allMonomials, p)});
     ) else A = apply(sampleImagePoints, p -> {sub(allMonomials, p)});
-    interpolationData = numericalNullity(A, true, Verbose => opts.Verbose, Threshold => opts.Threshold);
+    interpolationData := numericalNullity(A, true, Verbose => opts.Verbose, Threshold => opts.Threshold);
     new NumericalInterpolationTable from {
         symbol hilbertFunctionArgument => d,
         symbol hilbertFunctionValue => first interpolationData,
@@ -203,23 +209,11 @@ imPartMatrix := A -> matrix table(numrows A, numcols A, (i,j) -> imaginaryPart A
 
 extractImageEquations = method(Options => {symbol Threshold => 5})
 extractImageEquations NumericalInterpolationTable := Matrix => opts -> T -> (
-    local A, local B, local C, local D;
-    A = T.interpolationMatrix;
-    B = random(RR)*realPartMatrix A + random(RR)*imPartMatrix A;
-    C = matrix table(numrows B, numcols B, (i,j) -> lift(round(10^(1+opts.Threshold)*round(opts.Threshold, B_(i,j))), ZZ));
-    D = submatrix(LLL(id_(ZZ^(numcols C)) || C), toList (0..<numcols T.interpolationBasis), toList(0..<T.hilbertFunctionValue));
+    A := T.interpolationMatrix;
+    B := random(RR)*realPartMatrix A + random(RR)*imPartMatrix A;
+    C := matrix table(numrows B, numcols B, (i,j) -> lift(round(10^(1+opts.Threshold)*round(opts.Threshold, B_(i,j))), ZZ));
+    D := submatrix(LLL(id_(ZZ^(numcols C)) || C), toList (0..<numcols T.interpolationBasis), toList(0..<T.hilbertFunctionValue));
     transpose(T.interpolationBasis*sub(D, ring T.interpolationBasis))
-    -- local s, local kernelDim, local V, local allMonomials, local C, local E, local M;
-    -- s = #first T.interpolationSVD;
-    -- kernelDim = T.hilbertFunctionValue;
-    -- V = conjugate last T.interpolationSVD;
-    -- allMonomials = transpose T.interpolationBasis;
-    -- C = ring allMonomials;
-    -- if kernelDim == 0 then return {map(C^1, C^1, 0), map(C^1, C^1, 0)};
-    -- E = V^{s-kernelDim..s-1};
-    -- if not opts.AttemptExact then return (numcols allMonomials)*E*allMonomials;
-    -- M = 1e9*(matrix apply(entries E, r -> apply(r, e -> round(8, e))));
-    -- transpose matrix{apply(flatten entries(mingens ideal(M*allMonomials)), f -> round(3, f))}
 )
 extractImageEquations (Thing, Ideal, ZZ) := Matrix => opts -> (F, I, d) -> extractImageEquations numericalHilbertFunction(F, I, d)
 
@@ -232,55 +226,58 @@ round (ZZ, RingElement) := RingElement => (n, f) -> (first coefficients f)*round
 
 
 numericalImageDegree = method(Options => {
-	Software => M2engine, 
-	Verbose => true, 
-	symbol repeats => 3, 
-	symbol traceThreshold => 1e-5, 
-	symbol maxAttempts => 5, 
+	IsGraded => true,
+	symbol maxAttempts => 5,
         symbol maxThreads => 1,
-	symbol Threshold => 5, 
-	IsGraded => true})
+        Software => M2engine,
+        symbol repeats => 3,
+        symbol traceThreshold => 1e-5,
+	symbol Threshold => 5,
+	Verbose => true})
 numericalImageDegree (Thing, Ideal, Thing, Point) := PseudoWitnessSet => opts -> (F, I, W, sourcePoint) -> ( --outputs a pseudo-witness set for F(V(I))
-    local dims, local targetRing, local numFailedTraceTests, local traceResult, local pairTable, local imagePoint;
-    local startSystem, local pullbackSliceData, local sliceTranslation, local pullbackSlice, local sliceCoefficients;
-    local fiberSlice, local newFiberSlice, local squaredUpSource, local newStartSystem, local newTrackedPairs;
-    local newSamplePair, local pointPairs;
+    local imagePoint, local pairTable, local startSystem;
     y := symbol y;
-    targetRing = (coefficientRing(ring(I)))[y_1..y_(#F)];
-    dims = numericalDimensions(F, I, sourcePoint);
-    numFailedTraceTests = 0;
-    traceResult = opts.traceThreshold + 1;
+    targetRing := (coefficientRing(ring(I)))[y_1..y_(#F)];
+    dims := numericalDimensions(F, I, sourcePoint);
+    numFailedTraceTests := 0;
+    traceResult := opts.traceThreshold + 1;
     while not traceResult < opts.traceThreshold and numFailedTraceTests < opts.maxAttempts do (
         if numFailedTraceTests > 0 and not W === null then (
 	    if W === {} and not I == 0 then W = first components numericalIrreducibleDecomposition(I, Software => opts.Software);
 	    sourcePoint = numericalSourceSample(I, W);
 	);
-        pullbackSliceData = randomCombinations(F, last dims, true);
-        sliceTranslation = transpose sub(matrix{last pullbackSliceData}, matrix sourcePoint);
-        pullbackSlice = (last pullbackSliceData) - flatten entries sliceTranslation;
-        sliceCoefficients = promote((first pullbackSliceData) | (-1)*sliceTranslation, targetRing);
-        fiberSlice = if first dims > last dims then (
-            newFiberSlice = randomCombinations(gens(ring(I)) | {10_(ring(I))}, (first dims) - (last dims), false);
+        -- pullbackSliceData := randomCombinations(F, last dims, true);
+        pullbackSliceData := randomCombinations(matrix{F}, last dims, false);
+        -- sliceTranslation := transpose sub(matrix{last pullbackSliceData}, matrix sourcePoint);
+        -- pullbackSlice := (last pullbackSliceData) - flatten entries sliceTranslation;
+        -- sliceCoefficients := promote((first pullbackSliceData) | (-1)*sliceTranslation, targetRing);
+        sliceTranslation := sub(matrix{last pullbackSliceData}, matrix sourcePoint);
+        pullbackSlice := (last pullbackSliceData) - flatten entries sliceTranslation;
+        sliceCoefficients := sub((first pullbackSliceData) || (-1)*sliceTranslation, targetRing);
+        fiberSlice := if first dims > last dims then (
+            -- newFiberSlice := randomCombinations(gens(ring(I)) | {10_(ring(I))}, (first dims) - (last dims), false);
+            newFiberSlice := last randomCombinations(vars(ring(I)), first dims - last dims, true);
             newFiberSlice - flatten entries sub(matrix{newFiberSlice}, matrix sourcePoint)
         ) else {};
-	squaredUpSource = (if I == 0 then {} else randomCombinations(I_*, #gens(ring(I)) - first dims, false));
-	newStartSystem = squaredUpSource | fiberSlice | pullbackSlice;
+	-- squaredUpSource := (if I == 0 then {} else randomCombinations(I_*, #gens(ring(I)) - first dims, false));
+        squaredUpSource := if I == 0 then {} else last randomCombinations(gens I, #gens(ring(I)) - first dims, false);
+	newStartSystem := squaredUpSource | fiberSlice | pullbackSlice;
         if numFailedTraceTests > 0 then (
-            newTrackedPairs = numericalEval(F, smartTrack(startSystem, newStartSystem, (values pairTable)/first, true, opts), true);
+            newTrackedPairs := numericalEval(F, smartTrack(startSystem, newStartSystem, (values pairTable)/first, true, opts), true);
             pairTable = new MutableHashTable;
             for newPair in newTrackedPairs do (
                 imagePoint = toString round(opts.Threshold, last newPair);
                 if not pairTable#?imagePoint then pairTable#imagePoint = newPair;
             );
         ) else pairTable = new MutableHashTable;
-        newSamplePair = first numericalEval(F, {sourcePoint}, true);
+        newSamplePair := first numericalEval(F, {sourcePoint}, true);
         imagePoint = toString round(opts.Threshold, last newSamplePair);
         if not pairTable#?imagePoint then (
             pairTable#imagePoint = newSamplePair;
             if opts.Verbose and numFailedTraceTests > 0 then print "Added new image point";
         );
 	startSystem = newStartSystem;
-        pointPairs = monodromyLoop(F, last dims, startSystem, pairTable, opts);
+        pointPairs := monodromyLoop(F, last dims, startSystem, pairTable, opts);
         if opts.Verbose then print("Running trace test ...");
         traceResult = doTraceTest(F, last dims, startSystem, pointPairs, opts);
         if not traceResult < opts.traceThreshold then (
@@ -301,8 +298,10 @@ numericalImageDegree (Thing, Ideal, Thing, Point) := PseudoWitnessSet => opts ->
         symbol map => F,
         symbol sourceEquations => I,
         symbol sourceSlice => transpose matrix{fiberSlice},
-        symbol imageSlice => sliceCoefficients*((transpose vars targetRing) || matrix{{1_targetRing}}),
+        symbol imageSlice => ((vars targetRing) | matrix{{1_targetRing}})*sliceCoefficients,
+        -- symbol imageSlice => sliceCoefficients*((transpose vars targetRing) || matrix{{1_targetRing}}),
         symbol witnessPointPairs => VerticalList apply(pointPairs, pair -> (first pair, point last pair)),
+        -- symbol witnessPointPairs => VerticalList pointPairs,
         symbol witnessSet => W, 
 	symbol traceTest => traceResult
     }
@@ -320,15 +319,7 @@ numericalImageDegree(Thing, Ideal, Point) := PseudoWitnessSet => opts -> (F, I, 
 )
 
 
-smartTrack = method(Options => {
-	Software => M2engine, 
-	Verbose => true, 
-	repeats => 3, 
-	traceThreshold => 1e-5, 
-	maxAttempts => 5, 
-        maxThreads => 1,
-	Threshold => 5, 
-	IsGraded => true})
+smartTrack = method(Options => options numericalImageDegree)
 smartTrack (List, List, List, Boolean) := List => opts -> (startSystem, targetSystem, startSolutions, doRefinements) -> (
     randomGamma := random(coefficientRing(ring(first(startSystem))));
     startSystem = polySystem startSystem;
@@ -360,8 +351,14 @@ numericalEval (List, List, Boolean) := List => (F, upstairsPoints, includeUpstai
 )
 
 
-randomCombinations = method()
-randomCombinations (List, ZZ, Boolean) := List => (polys, c, keepCoeffs) -> ( --outputs a list of c random linear combinations of polys
+randomCombinations = method() -- outputs a list of c random linear combinations of polys
+randomCombinations (Matrix, ZZ, Boolean) := List => (polys, c, isAffine) -> ( -- polys should be a row matrix
+    R := ring polys;
+    if isAffine then polys = polys | matrix{{10_R}};
+    randomCoefficients := random(R^(numcols polys), R^c);
+    (randomCoefficients, flatten entries(polys*randomCoefficients))
+)
+randomCombinations (List, ZZ, Boolean) := List => (polys, c, keepCoeffs) -> (
     C := coefficientRing(ring(first polys));
     randomCoefficients := random(C^c, C^#polys);
     newpolys := flatten entries(promote(randomCoefficients, ring(first polys)) * transpose(matrix{polys}));
@@ -369,30 +366,21 @@ randomCombinations (List, ZZ, Boolean) := List => (polys, c, keepCoeffs) -> ( --
 )
 
 
-monodromyLoop = method(Options => {
-	Software => M2engine, 
-	Verbose => true, 
-	repeats => 3, 
-	traceThreshold => 1e-5, 
-	maxAttempts => 5, 
-        maxThreads => 1,
-	Threshold => 5, 
-	IsGraded => true})
+monodromyLoop = method(Options => options numericalImageDegree)
 monodromyLoop (List, ZZ, List, MutableHashTable) := List => opts -> (F, imageDim, startSystem, pairTable) -> (
-    local numRepetitiveMonodromyLoops, local previousNumImagePoints, local intermediateSystem1;
-    local intermediateSolutions1, local endSolutions, local candidatePairs, local imagePoint;
-    numRepetitiveMonodromyLoops = 0;
+    numRepetitiveMonodromyLoops := 0;
     if opts.Verbose then print "Tracking monodromy loops ...";
     while numRepetitiveMonodromyLoops < opts.repeats do (
-        previousNumImagePoints = #values pairTable;
-        intermediateSystem1 = drop(startSystem, -imageDim) | randomCombinations(F | {10_(ring(first(F)))}, imageDim, false);
-        intermediateSolutions1 = smartTrack(startSystem, intermediateSystem1, (values pairTable)/first, false, opts);
+        previousNumImagePoints := #values pairTable;
+        -- intermediateSystem1 := drop(startSystem, -imageDim) | randomCombinations(F | {10_(ring(first(F)))}, imageDim, false);
+        intermediateSystem1 := drop(startSystem, -imageDim) | last randomCombinations(matrix{F}, imageDim, true);
+        intermediateSolutions1 := smartTrack(startSystem, intermediateSystem1, (values pairTable)/first, false, opts);
         if #intermediateSolutions1 > 0 then (
-            endSolutions = smartTrack(intermediateSystem1, startSystem, intermediateSolutions1, false, opts);
+            endSolutions := smartTrack(intermediateSystem1, startSystem, intermediateSolutions1, false, opts);
             if #endSolutions > 0 then (
-                candidatePairs = numericalEval(F, endSolutions, true);
+                candidatePairs := numericalEval(F, endSolutions, true);
                 for newPair in candidatePairs do (
-                    imagePoint = toString round(opts.Threshold, last newPair);
+                    imagePoint := toString round(opts.Threshold, last newPair);
                     if not pairTable#?imagePoint then pairTable#imagePoint = newPair;
                 );
             );
@@ -405,35 +393,24 @@ monodromyLoop (List, ZZ, List, MutableHashTable) := List => opts -> (F, imageDim
 )
 
 
-doTraceTest = method(Options => {
-	Software => M2engine, 
-	Verbose => true, 
-	repeats => 3, 
-	traceThreshold => 1e-5, 
-	maxAttempts => 5, 
-        maxThreads => 1,
-	Threshold => 5, 
-	IsGraded => true})
+doTraceTest = method(Options => options numericalImageDegree)
 doTraceTest (List, ZZ, List, List) := RR => opts -> (F, imageDim, startSystem, intersectionPointPairs) -> (
-    local C, local startUpstairsPoints, local startDownstairsPoints, local randomTranslation, local gammas;
-    local firstStepSystem, local secondStepSystem, local firstStepUpstairsPoints, local secondStepUpstairsPoints;
-    local firstStepDownstairsPoints, local secondStepDownstairsPoints, local traceList;
-    C = coefficientRing(ring(first F));
-    startUpstairsPoints = intersectionPointPairs/first;
-    startDownstairsPoints = intersectionPointPairs/last;
+    C := coefficientRing(ring(first F));
+    startUpstairsPoints := intersectionPointPairs/first;
+    startDownstairsPoints := intersectionPointPairs/last;
     for translationMagnitude in {1,2,3,4,5,-1,6,-2} do (
         if opts.Verbose then print("Translation magnitude: " | toString translationMagnitude);
-        randomTranslation = 10^(4-translationMagnitude)*flatten entries(map(C^1, C^(#startSystem - imageDim), 0) | random(C^1, C^imageDim));
-        gammas = {random(C), random(C)};
-        firstStepSystem = startSystem + (first gammas)*randomTranslation;
-        secondStepSystem = startSystem + (last gammas)*randomTranslation;
-        firstStepUpstairsPoints = smartTrack(startSystem, firstStepSystem, startUpstairsPoints, true, opts);
+        randomTranslation := 10^(4-translationMagnitude)*flatten entries(map(C^1, C^(#startSystem - imageDim), 0) | random(C^1, C^imageDim));
+        gammas := {random(C), random(C)};
+        firstStepSystem := startSystem + (first gammas)*randomTranslation;
+        secondStepSystem := startSystem + (last gammas)*randomTranslation;
+        firstStepUpstairsPoints := smartTrack(startSystem, firstStepSystem, startUpstairsPoints, true, opts);
         if #firstStepUpstairsPoints == #startUpstairsPoints then (
-            secondStepUpstairsPoints = smartTrack(startSystem, secondStepSystem, startUpstairsPoints, true, opts);
+            secondStepUpstairsPoints := smartTrack(startSystem, secondStepSystem, startUpstairsPoints, true, opts);
             if #secondStepUpstairsPoints == #startUpstairsPoints then (
-                firstStepDownstairsPoints = numericalEval(F, firstStepUpstairsPoints, false);
-                secondStepDownstairsPoints = numericalEval(F, secondStepUpstairsPoints, false);
-                traceList = (1/first gammas)*(firstStepDownstairsPoints - startDownstairsPoints) - (1/last gammas)*(secondStepDownstairsPoints - startDownstairsPoints);
+                firstStepDownstairsPoints := numericalEval(F, firstStepUpstairsPoints, false);
+                secondStepDownstairsPoints := numericalEval(F, secondStepUpstairsPoints, false);
+                traceList := (1/first gammas)*(firstStepDownstairsPoints - startDownstairsPoints) - (1/last gammas)*(secondStepDownstairsPoints - startDownstairsPoints);
                 return norm(2,sum(traceList))
             );
         );
@@ -442,35 +419,26 @@ doTraceTest (List, ZZ, List, List) := RR => opts -> (F, imageDim, startSystem, i
 )
 
 
-isOnImage = method(Options => {
-	Software => M2engine, 
-	Verbose => true, 
-	repeats => 3, 
-	traceThreshold => 1e-5, 
-	maxAttempts => 5, 
-        maxThreads => 1,
-	Threshold => 5, 
-	IsGraded => true})
+isOnImage = method(Options => options numericalImageDegree)
 isOnImage (PseudoWitnessSet, Point) := Boolean => opts -> (W, q) -> (
-    local F, local I, local fiberSlice, local targetVariables, local pullbackSlice, local squaredUpSource;
-    local startUpstairsPoints, local newPullbackSliceData, local sliceCoefficients, local newPullbackSlice;
-    local targetUpstairsPoints, local imagePointTable;
     q = matrix if not opts.IsGraded then point{append(q#Coordinates, 1_(ring(first(q#Coordinates))))} else q;
     if not W.isCompletePseudoWitnessSet then print "Warning: not a complete pseudo-witness set! May return false negative.";
-    F = W.map;
-    I = W.sourceEquations;
+    F := W.map;
+    I := W.sourceEquations;
     if not ring q === coefficientRing ring I then error "Point must have coordinates in the coefficient ring of the ideal.";
-    fiberSlice = flatten entries W.sourceSlice;
-    targetVariables = gens ring(W.imageSlice);
-    pullbackSlice = flatten entries sub(W.imageSlice, apply(toList(0..<#targetVariables), i -> targetVariables#i => F#i));
-    squaredUpSource = (if I == 0 then {} else randomCombinations(I_*, #gens(ring(I)) - #fiberSlice - #pullbackSlice, false));
-    startUpstairsPoints = W.witnessPointPairs /first;
-    newPullbackSliceData = randomCombinations(F, #pullbackSlice, true);
-    sliceCoefficients = first newPullbackSliceData;
-    newPullbackSlice = last newPullbackSliceData;
+    fiberSlice := flatten entries W.sourceSlice;
+    targetVariables := gens ring(W.imageSlice);
+    pullbackSlice := flatten entries sub(W.imageSlice, apply(toList(0..<#targetVariables), i -> targetVariables#i => F#i));
+    -- squaredUpSource := (if I == 0 then {} else randomCombinations(I_*, #gens(ring(I)) - #fiberSlice - #pullbackSlice, false));
+    squaredUpSource := if I == 0 then {} else last randomCombinations(gens I, #gens(ring(I)) - #fiberSlice - #pullbackSlice, false);
+    startUpstairsPoints := W.witnessPointPairs /first;
+    -- newPullbackSliceData := randomCombinations(F, #pullbackSlice, true);
+    newPullbackSliceData := randomCombinations(matrix{F}, #pullbackSlice, false);
+    sliceCoefficients := first newPullbackSliceData;
+    newPullbackSlice := last newPullbackSliceData;
     newPullbackSlice = newPullbackSlice - flatten entries (sliceCoefficients * promote(transpose(q), coefficientRing(ring(I))));
-    targetUpstairsPoints = smartTrack(squaredUpSource | fiberSlice | pullbackSlice, squaredUpSource | fiberSlice | newPullbackSlice, startUpstairsPoints, true, opts);
-    imagePointTable = hashTable apply(numericalEval(F, targetUpstairsPoints, false), p -> round(opts.Threshold, p) => 0);
+    targetUpstairsPoints := smartTrack(squaredUpSource | fiberSlice | pullbackSlice, squaredUpSource | fiberSlice | newPullbackSlice, startUpstairsPoints, true, opts);
+    imagePointTable := hashTable apply(numericalEval(F, targetUpstairsPoints, false), p -> round(opts.Threshold, p) => 0);
     imagePointTable#?(round(opts.Threshold, q))
 )
 isOnImage (Thing, Ideal, Point) := Boolean => opts -> (F, I, q) -> isOnImage(numericalImageDegree(F, I, opts), q, opts)
@@ -663,6 +631,24 @@ isWellDefined PseudoWitnessSet := Boolean => W -> (
         return false
     );
     true
+)
+
+
+multivariateHorner = method()
+multivariateHorner (Matrix, Ring, List) := Matrix =>  (p, R, T) -> (
+    if #T == 0 then return 0_R;
+    -- if #T == 1 then return sub(T#1*R_(T#0), p);
+    if sum T#0#0 == 1 then return sub(sum apply(T, t -> t#1*R_(t#0)), p);
+    i := maxPosition sum (T/first);
+    e := insert(i, 1, toList(#gens R-1:0));
+    H := hashTable(splice, apply(T, t -> if t#0#i > 0 then 1 => {t#0 - e, t#1} else 0 => t));
+    reducedTerms := if H#?1 then if class(H#1) === List then {H#1} else toList H#1 else {};
+    otherTerms := if H#?0 then if class(H#0) === List then {H#0} else toList H#0 else {};
+    p_(0,i)*multivariateHorner(p, R, reducedTerms) + multivariateHorner(p, R, otherTerms)
+)
+multivariateHorner (Matrix, RingElement) := Matrix => (p, f) -> (
+    if not(numcols p == #gens ring f and numrows p == 1) then error("Expected p to be a 1 x " | #gens ring f | " matrix");
+    multivariateHorner(p, ring f, listForm f /toList)
 )
 
 
@@ -1654,6 +1640,12 @@ installPackage("NumericalImplicitization", RemakeAllDocumentation => true)
 viewHelp "NumericalImplicitization"
 check "NumericalImplicitization"
 
+
+-- TODO:
+-- Change input type of F to be matrix
+-- Multivariate Horner method for faster evaluation
+-- Faster evaluation at multiple points
+-- Specify linear slice L for monodromy
 
 
 -- high degree rational normal curve
