@@ -1,7 +1,7 @@
 newPackage("NumericalImplicitization",
     Headline => "NumericalImplicitization",
-    Version => "1.0.5",
-    Date => "January 6, 2019",
+    Version => "1.0.6",
+    Date => "January 11, 2019",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen@math.berkeley.edu",
@@ -44,9 +44,7 @@ newPackage("NumericalImplicitization",
         "witnessPointPairs",
         "traceTest",
 	"isOnImage",
-        "numericalEval",
-        "numericalFiber",
-        "multivariateHorner"
+        "numericalEval"
     }
 
 -- software options (none for sample nor refine): default is M2engine throughout
@@ -81,7 +79,7 @@ checkRings (Thing, Ideal) := Sequence => opts -> (F, I) -> (
     if not all(F, f -> ring f === ring I) then error "Expected same rings for ideal and map";
     if not class coefficientRing ring I === ComplexField then print "Warning: expected coefficient field to be complex numbers";
     if not opts.IsGraded then (
-        t := symbol t;
+        t := getSymbol "t";
         R := (coefficientRing ring I)(monoid[append(gens ring I, t)]);
         toR := map(R, ring I);
         ((last gens R)*append(apply(F, f -> toR(f)), 1_R), toR(I))
@@ -151,7 +149,7 @@ numericalNullity (List, Boolean) := List => opts -> (M, keepSVD) -> (
 	print "Computing numerical kernel ...";
 	time (S, U, Vt) := SVD A; -- do not use DivideConquer => true!
     ) else (
-        A = matrix if opts.Precondition then apply(M, row -> if row#0 == 0 then row else (1/norm(2,row#0))*row) else M;
+        A = matrix if opts.Precondition then doubleScale M else matrix M;
         (S, U, Vt) = SVD A;
     );
     largestGap := (#S, opts.Threshold);
@@ -175,7 +173,7 @@ numericalHilbertFunction = method(Options => {
 numericalHilbertFunction (Thing, Ideal, List, ZZ) := NumericalInterpolationTable => opts -> (F, I, sampleImagePoints, d) -> ( --outputs a degree d interpolation table for F(V(I))
     (F, I) = checkRings(F, I, IsGraded => opts.IsGraded);
     if not opts.IsGraded then sampleImagePoints = apply(sampleImagePoints, p -> {append(p#Coordinates, 1_(coefficientRing ring I))});
-    y := symbol y;
+    y := getSymbol "y";
     allMonomials := basis(d, (coefficientRing ring I)[y_0..y_(#F-1)]);
     N := numcols allMonomials;
     if #sampleImagePoints < N then (
@@ -236,7 +234,7 @@ numericalImageDegree = method(Options => {
 	Verbose => true})
 numericalImageDegree (Thing, Ideal, Thing, Point) := PseudoWitnessSet => opts -> (F, I, W, sourcePoint) -> ( --outputs a pseudo-witness set for F(V(I))
     local imagePoint, local pairTable, local startSystem;
-    y := symbol y;
+    y := getSymbol "y";
     targetRing := (coefficientRing(ring(I)))[y_1..y_(#F)];
     dims := numericalDimensions(F, I, sourcePoint);
     numFailedTraceTests := 0;
@@ -443,214 +441,6 @@ isOnImage (PseudoWitnessSet, Point) := Boolean => opts -> (W, q) -> (
     imagePointTable#?(round(opts.Threshold, q))
 )
 isOnImage (Thing, Ideal, Point) := Boolean => opts -> (F, I, q) -> isOnImage(numericalImageDegree(F, I, opts), q, opts)
-
-
-numericalFiber = method(Options => {
-	Software => M2engine, 
-	Verbose => false, 
-	repeats => 2, 
-	traceThreshold => 1e-5, 
-	maxAttempts => 20, 
-        maxThreads => 1,
-	Threshold => 5, 
-	IsGraded => true})
-numericalFiber PseudoWitnessSet := HashTable => opts -> imPW -> (
-    F := imPW.map;
-    I := imPW.sourceEquations;
-    (x, y) := (symbol x, symbol y);
-    productRing := (coefficientRing(ring(I)))[x_1..x_(#gens ring I),y_1..y_(#F)];
-    toGraph := map(productRing, ring I, apply(toList(1..#gens ring I), i -> x_i));
-    J := ideal apply(#F, i -> y_(i+1) - toGraph(F#i));
-    if not(I == 0) then J = J + toGraph I;
-    G := gens productRing;
-    graphPW := numericalImageDegree(gens ring I | F, I, imPW.witnessSet, imPW.witnessPointPairs#0#0, opts);
-    generalSlice := J_* | flatten entries (map(productRing, ring graphPW.imageSlice, G))(graphPW.imageSlice);
-    horizontalSlice := J_* | flatten entries (map(productRing, ring imPW.imageSlice, take(G, -#F)))(imPW.imageSlice);
-    horizontalPts := apply(smartTrack(generalSlice, horizontalSlice, graphPW.witnessPointPairs/last, false, opts), p -> p#Coordinates/round_(opts.Threshold));
-    sortByFiber := hashTable((a, b) -> append(a, b#0), apply(horizontalPts, p -> take(p, -#F) => {take(p, #p - #F)}));
-    print("General fiber has size " | #first values sortByFiber);
-    sortByFiber
-)
-numericalFiber (Thing, Ideal) := HashTable => opts -> (F, I) -> (
-    (F, I) = checkRings(F, I, IsGraded => opts.IsGraded);
-    W := if I == 0 then {} else first components numericalIrreducibleDecomposition(I, Software => opts.Software);
-    imPW := numericalImageDegree(F, I, W, numericalSourceSample(I, W), opts);
-    if not imPW.isCompletePseudoWitnessSet then print "Warning: not a complete pseudo-witness set! May return incomplete results.";
-    numericalFiber(imPW, opts)
-)
-
-
-isWellDefined NumericalInterpolationTable := Boolean => T -> (
-    -- CHECK DATA STRUCTURE
-    -- CHECK KEYS
-    K := keys T;
-    expectedKeys := set {
-        symbol hilbertFunctionArgument, 
-        symbol hilbertFunctionValue, 
-        symbol imagePoints, 
-        symbol interpolationBasis, 
-        symbol interpolationSVD, 
-        symbol map
-    };
-    if set K =!= expectedKeys then (
-	if debugLevel > 0 then (
-	    added := toList(K - expectedKeys);
-	    missing := toList(expectedKeys - K);
-	    if #added > 0 then << "-- unexpected key(s): " << toString added << endl;
-	    if #missing > 0 then << "-- missing keys(s): " << toString missing << endl;
-        );
-        return false
-    );
-    -- CHECK TYPES
-    if not instance(T.hilbertFunctionArgument, ZZ) then (
-        if debugLevel > 0 then << "-- expected `hilbertFunctionArgument' to be an integer" << endl;
-	return false
-    );
-    if not instance(T.hilbertFunctionValue, ZZ) then (
-        if debugLevel > 0 then << "-- expected `hilbertFunctionValue' to be an integer" << endl;
-	return false
-    );
-    if not instance(T.map, List) then (
-        if debugLevel > 0 then << "-- expected `map' to be a list" << endl;
-	return false
-    );
-    if not instance(T.interpolationBasis, Matrix) then (
-        if debugLevel > 0 then << "-- expected `interpolationBasis' to be a matrix" << endl;
-	return false
-    );
-    if not instance(T.interpolationSVD, Sequence) then (
-        if debugLevel > 0 then << "-- expected `interpolationSVD' to be a sequence" << endl;
-        return false
-    );
-    if not instance(first T.interpolationSVD, List) then (
-        if debugLevel > 0 then << "-- expected first element of `interpolationSVD' to be a list" << endl;
-        return false
-    );
-    if not all(first T.interpolationSVD, s -> instance(s, RR)) then (
-        if debugLevel > 0 then << "-- expected first element of `interpolationSVD' to be a list of singular values" << endl;
-        return false
-    );
-    if not all(drop(T.interpolationSVD, 1), M -> instance(M, Matrix)) then (
-        if debugLevel > 0 then << "-- expected second and third elements of `interpolationSVD' to be matrices" << endl;
-	return false
-    );
-    -- CHECK MATHEMATICAL STRUCTURE
-    if not unique flatten last degrees T.interpolationBasis === {T.hilbertFunctionArgument} then (
-        if debugLevel > 0 then << ("-- expected `interpolationBasis' to consist of monomials of degree " | T.hilbertFunctionArgument) << endl;
-        return false
-    );
-    if not all({coefficientRing ring T.interpolationBasis, ring(T.interpolationSVD#2)}/class, C -> C === ComplexField) then (
-        if debugLevel > 0 then << "-- expected ground field to be complex numbers" << endl;
-        return false
-    );
-    numMonomials := binomial(#T.map + T.hilbertFunctionArgument - 1, T.hilbertFunctionArgument);
-    if not #gens ring T.interpolationBasis === #T.map or not numcols T.interpolationBasis === numMonomials then (
-        if debugLevel > 0 then << ("-- expected `interpolationBasis' to have " | numMonomials | " monomials in " | #T.map | " variables") << endl;
-        return false
-    );
-    true
-)
-
-
-isWellDefined PseudoWitnessSet := Boolean => W -> (
-    -- CHECK DATA STRUCTURE
-    -- CHECK KEYS
-    K := keys W;
-    expectedKeys := set {
-        symbol isCompletePseudoWitnessSet, 
-        symbol degree, 
-        symbol map, 
-        symbol sourceEquations, 
-        symbol sourceSlice, 
-        symbol imageSlice, 
-        symbol witnessPointPairs, 
-        symbol witnessSet, 
-        symbol traceTest
-    };
-    if set K =!= expectedKeys then (
-	if debugLevel > 0 then (
-	    added := toList(K - expectedKeys);
-	    missing := toList(expectedKeys - K);
-	    if #added > 0 then << "-- unexpected key(s): " << toString added << endl;
-	    if #missing > 0 then << "-- missing keys(s): " << toString missing << endl;
-        );
-        return false
-    );
-    -- CHECK TYPES
-    if not instance(W.isCompletePseudoWitnessSet, Boolean) then (
-        if debugLevel > 0 then << "-- expected `isCompletePseudoWitnessSet' to be a Boolean" << endl;
-	return false
-    );
-    if not instance(W.degree, ZZ) then (
-        if debugLevel > 0 then << "-- expected `degree' to be an integer" << endl;
-	return false
-    );
-    if not instance(W.map, List) then (
-        if debugLevel > 0 then << "-- expected `map' to be a list" << endl;
-	return false
-    );
-    if not instance(W.sourceEquations, Ideal) then (
-        if debugLevel > 0 then << "-- expected `sourceEquations' to be an ideal" << endl;
-	return false
-    );
-    if not instance(W.sourceSlice, Matrix) then (
-        if debugLevel > 0 then << "-- expected `sourceSlice' to be a matrix" << endl;
-	return false
-    );
-    if not instance(W.imageSlice, Matrix) then (
-        if debugLevel > 0 then << "-- expected `imageSlice' to be a matrix" << endl;
-	return false
-    );
-    if not instance(W.witnessPointPairs, List) then (
-        if debugLevel > 0 then << "-- expected `witnessPointPairs' to be a list" << endl;
-	return false
-    );
-    if not all(W.witnessPointPairs, pair -> instance(pair, Sequence)) then (
-        if debugLevel > 0 then << "-- expected `witnessPointPairs' to be a list of sequences" << endl;
-        return false
-    );
-    if not all(W.witnessPointPairs, pair -> all(pair, p -> instance(p, Point))) then (
-        if debugLevel > 0 then << "-- expected `witnessPointPairs' to be a list of sequences of points" << endl;
-        return false
-    );
-    if not instance(W.traceTest, RR) then (
-        if debugLevel > 0 then << "-- expected `traceTest' to be a real number" << endl;
-	return false
-    );
-    -- CHECK MATHEMATICAL STRUCTURE
-    R := ring W.sourceEquations;
-    if not all(W.map, f -> ring f === R) then (
-        if debugLevel > 0 then << "-- expected elements of `map' and `sourceEquations' to live in same ring" << endl;
-        return false
-    );
-    if not all({R, ring W.imageSlice}/coefficientRing/class, C -> C === ComplexField) then (
-        if debugLevel > 0 then << "-- expected ground field to be complex numbers" << endl;
-        return false
-    );
-    if not all(W.witnessPointPairs, pair -> #(pair#0#Coordinates) === #gens R and #(pair#1#Coordinates) === #gens ring W.imageSlice) then (
-        if debugLevel > 0 then << "-- number of coordinates in `witnessPointPairs' do not match" << endl;
-        return false
-    );
-    true
-)
-
-
-multivariateHorner = method()
-multivariateHorner (Matrix, Ring, List) := Matrix =>  (p, R, T) -> (
-    if #T == 0 then return 0_R;
-    -- if #T == 1 then return sub(T#1*R_(T#0), p);
-    if sum T#0#0 == 1 then return sub(sum apply(T, t -> t#1*R_(t#0)), p);
-    i := maxPosition sum (T/first);
-    e := insert(i, 1, toList(#gens R-1:0));
-    H := hashTable(splice, apply(T, t -> if t#0#i > 0 then 1 => {t#0 - e, t#1} else 0 => t));
-    reducedTerms := if H#?1 then if class(H#1) === List then {H#1} else toList H#1 else {};
-    otherTerms := if H#?0 then if class(H#0) === List then {H#0} else toList H#0 else {};
-    p_(0,i)*multivariateHorner(p, R, reducedTerms) + multivariateHorner(p, R, otherTerms)
-)
-multivariateHorner (Matrix, RingElement) := Matrix => (p, f) -> (
-    if not(numcols p == #gens ring f and numrows p == 1) then error("Expected p to be a 1 x " | #gens ring f | " matrix");
-    multivariateHorner(p, ring f, listForm f /toList)
-)
 
 
 beginDocumentation()
@@ -930,7 +720,6 @@ doc ///
         [numericalHilbertFunction, IsGraded]
         [numericalImageDegree, IsGraded]
         [isOnImage, IsGraded]
-        [numericalFiber, IsGraded]
     Headline
         whether input is homogeneous
     Usage
@@ -990,7 +779,6 @@ doc ///
     	[numericalImageDegree, Verbose]
 	[isOnImage, Verbose]
         [numericalNullity, Verbose]
-        [numericalFiber, Verbose]
     Headline
     	display detailed output
     Usage
@@ -1089,10 +877,6 @@ doc ///
     	[numericalImageDegree, traceThreshold]
     	[numericalImageDegree, Threshold]
         [isOnImage, Threshold]
-        [numericalFiber, repeats]
-        [numericalFiber, maxAttempts]
-        [numericalFiber, traceThreshold]
-        [numericalFiber, Threshold]
     Headline
     	computes a pseudo-witness set for the image of a variety
     Usage
@@ -1286,7 +1070,6 @@ doc ///
         [numericalImageDim, Software]
         [numericalHilbertFunction, Software]
         [isOnImage, Software]
-        [numericalFiber, Software]
     Headline
     	specify software for homotopy continuation
     Usage
@@ -1316,7 +1099,6 @@ doc ///
         maxThreads
     	[numericalImageDegree, maxThreads]
         [isOnImage, maxThreads]
-        [numericalFiber, maxThreads]
     Headline
     	specify maximum number of processor threads
     Usage
@@ -1391,38 +1173,6 @@ doc ///
 
 doc ///
     Key
-	(isWellDefined, PseudoWitnessSet)
-	(isWellDefined, NumericalInterpolationTable)
-    Headline
-    	whether a point lies on the image of a variety
-    Usage
-    	isWellDefined X
-    Inputs
-        X:
-            a pseudo-witness set or numerical interpolation table
-    Outputs
-    	:Boolean
-	    whether the input represents a well-defined pseudo-witness set or numerical interpolation table
-    Description
-	Text
-            This method checks that the underlying data type of an object represents a well-defined 
-            pseudo-witness set or numerical interpolation table. 
-
-            For @TO NumericalInterpolationTable@: this method checks that the underlying @TO HashTable@
-            has the following keys: $hilbertFunctionArgument, hilbertFunctionValue, imagePoints, 
-            interpolationBasis, interpolationSVD, map$, and that these keys have the expected types.
-
-            For @TO PseudoWitnessSet@: this method checks that the underlying @TO HashTable@
-            has the following keys: $isCompletePseudoWitnessSet, degree, map, sourceEquations, 
-            sourceSlice, imageSlice, witnessPointPairs, traceTest$, and that these keys have the expected
-            types.
-    SeeAlso
-    	PseudoWitnessSet
-        NumericalInterpolationTable
-///
-
-doc ///
-    Key
         numericalNullity
         (numericalNullity, Matrix)
         (numericalNullity, Matrix, Boolean)
@@ -1458,7 +1208,7 @@ doc ///
             but not if the matrix is sparse (e.g. diagonal).
             
         Example
-            numericalNullity(matrix{{2, 1}, {0, 0.001}}, Precondition => false)
+            numericalNullity(matrix{{2, 1}, {0, 1e-5}}, Precondition => false)
             numericalNullity(map(CC^2,CC^2,0))
         Text
         
@@ -1480,46 +1230,7 @@ doc ///
         numericalRank
 ///
 
-doc ///
-    Key
-        numericalFiber
-        (numericalFiber, PseudoWitnessSet)
-        (numericalFiber, Thing, Ideal)
-    Headline
-        degree of generic fiber of finite map
-    Usage
-        numericalFiber W
-        numericalFiber(F, I)
-    Inputs
-        F:Thing
-	    a list, or matrix, or ring map, specifying a map which is finite on V(I)
-	I:Ideal
-	    which is prime, specifying a source variety $V(I)$
-        W:PseudoWitnessSet
-            describing the image of a variety
-    Outputs
-        :ZZ
-            degree of the general fiber of F
-    Description
-        Text
-            This method computes the cardinality of a general fiber 
-            (over a closed point) of a map $F$ with source $V(I)$. 
-            The map $F$ must be finite when restricted to $V(I)$. 
-            Since a general fiber of a finite map between irreducible
-            varieties is reduced, the output of this method will be the
-            degree of the general fiber of the map $F$.
-            
-        Example
-            R = CC[s]
-            apply(2..10, i -> numericalFiber(basis(i, R), ideal 0_R))
-    SeeAlso
-        numericalImageDegree
-        PseudoWitnessSet
-///
-
 undocumented {
-    (isWellDefined, PseudoWitnessSet),
-    (isWellDefined, NumericalInterpolationTable),
     numericalEval,
     (numericalEval, List, List, Boolean)
 }
@@ -1542,7 +1253,6 @@ F = basis(3,R)
 J = monomialCurveIdeal(QQ[a_0..a_3], {1,2,3})
 assert(all(1..5, d -> (numericalHilbertFunction(F,ideal 0_R,d)).hilbertFunctionValue == numcols super basis(d,J)))
 W = numericalImageDegree(F, ideal 0_R);
-assert(isWellDefined W == true)
 assert(W.degree == 3)
 assert(isOnImage(W, numericalImageSample(F,ideal 0_R)) == true)
 assert(isOnImage(W, point random(CC^1,CC^(numcols F))) == false)
@@ -1555,7 +1265,6 @@ F = flatten entries basis(4, R) - set{s^2*t^2}
 S = QQ[a_0..a_3]
 I3 = super basis(3, ker map(QQ[s,t], S, {s^4,s^3*t,s*t^3,t^4}))
 T = numericalHilbertFunction(F, ideal 0_R, 3);
-assert(isWellDefined T == true)
 M = extractImageEquations T
 assert(image transpose M == image (map(ring M, S, gens ring M))(I3))
 ///
@@ -1574,7 +1283,7 @@ I2 = image transpose extractImageEquations T
 assert(image (map(ring I2, ring J, gens ring I2))(J) == I2)
 time W = numericalImageDegree(F, I, repeats => 2, Verbose => false)
 assert(W.degree == 5)
-(n, m) = (5, 20)
+(n, m) = (5, 10)
 pointList = numericalImageSample(F, I, n);
 assert(all(pointList, q -> (tally apply(m, i -> isOnImage(W, q)))#true / m >= 8/10))
 ///
@@ -1624,7 +1333,7 @@ assert((numericalImageDegree(F,I,p, repeats=>2, traceThreshold => 1e-3, Threshol
 ///
 
 TEST ///
-assert(numericalNullity(matrix{{2, 1}, {0, 0.001}}, Precondition => false) == 1)
+assert(numericalNullity(matrix{{2, 1}, {0, 1e-5}}, Precondition => false) == 1)
 assert(numericalNullity(map(CC^2,CC^2,0)) == 2)
 assert(numericalNullity(id_(CC^2)) == 0)
 assert(numericalNullity(random(CC^2,CC^2)) == 0)
@@ -1642,10 +1351,10 @@ viewHelp "NumericalImplicitization"
 check "NumericalImplicitization"
 
 
+
 -- TODO:
 -- Change input type of F to be matrix
--- Multivariate Horner method for faster evaluation
--- Faster evaluation at multiple points
+-- Faster evaluation at multiple points (multivariate Horner / SLP?)
 -- Specify linear slice L for monodromy
 
 
@@ -1660,13 +1369,6 @@ R = CC[x_0..x_3]
 F = toList(1..5)/(i -> random(10,R));
 allowableThreads = maxAllowableThreads
 numericalImageDegree(F,ideal 0_R,repeats=>2)
-
-
--- Segre products
-(n1,n2) = (2,5)
-S = ZZ/3[x_(0,0)..x_(n1,n2)]
-I = minors(2, genericMatrix(S, n2+1, n1+1))
-time minimalBetti(I, DegreeLimit => 1)
 
 
 -- Trifocal variety
@@ -1734,14 +1436,6 @@ allowableThreads = maxAllowableThreads
 time W = numericalImageDegree(F, ideal 0_R, repeats => 1, maxThreads => allowableThreads)
 
 
--- numericalFiber
-
-loadPackage("NumericalImplicitization", Reload => true)
-
-R = CC[s]
-F = basis(2, R)
-numericalFiber(F, ideal 0_R)
-
 -- precision tests (TODO: Fix!)
 
 R = CC_54[s,t]; I = ideal 0_R; W = numericalImageDegree(basis(3, R), I)
@@ -1767,26 +1461,8 @@ F = random(R^1,R^{3:-3})
 F = matrix{toList(1..3)/(i -> random(3,R))}
 d = 18
 
-S = CC_prec[y_0..y_(numcols F-1)];
-S = CC[y_0..y_(numcols F-1)];
-allMonomials = basis(d, S);
-time P = numericalImageSample(F, I, binomial(numcols F-1+d, d));
-time P = numericalImageSample(F, I, 3*binomial(numcols F-1+d, d));
-norm1P = apply(P, p -> point{apply(p#Coordinates, c -> c/norm(2, p#Coordinates))});
-time M = matrix apply(P, p -> {evaluate(allMonomials, p)});
-time Mnorm = matrix apply(norm1P, p -> {evaluate(allMonomials, p)});
-(SVD M)#0, (SVD Mnorm)#0
 
-
-R = CC[s,t]; F = basis(3, R); I = ideal 0_R
-d = 4
-T = numericalHilbertFunction(F, I, d)
-E = extractImageEquations T
-J = ker map(QQ[a_0..a_1], QQ[b_0..b_3], {a_0^3, a_0^2*a_1, a_0*a_1^2, a_1^3})
-ideal E == ideal (map(ring E, ring J, gens ring E))(super basis(d, J))
-
-
--- Dim bad example
+-- Dim bad example (fixed - no longer bad!)
 jacI=(d,l,n)->(S=CC[x_(0,1)..x_(n,l),c_0..c_(binomial(l,n)-1)];R= S[X_0..X_n];
 M=for i from 1 to l list matrix{toList (x_(0,i)..x_(n,i))};
 H=for b in(for i from 0 to#subsets(M,n)-1 list for a in(subsets(M,n))_i list{a})
@@ -1795,10 +1471,7 @@ P=for t from 0 to #H-1 list for j from 0 to n list(-1)^(j)*(minors(n,H_t))_(n-j)
 F=sum for i from 0 to #P-1 list c_(i)*(sum for j from 0 to n list P_i_j*X_j)^d;
 I=transpose substitute((coefficients F)#1,S))
 
-t=13 
-
-(d,l,n) = (13,14,2)
+t=13
 time F = jacI(t,t+1,2);
 time F = value first lines get "jac13.txt";
 time numericalImageDim(F, ideal 0_S)
-binomial(t+2,2)
