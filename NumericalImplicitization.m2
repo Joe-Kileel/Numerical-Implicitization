@@ -1,13 +1,13 @@
 newPackage("NumericalImplicitization",
     Headline => "NumericalImplicitization",
-    Version => "1.0.6",
-    Date => "January 11, 2019",
+    Version => "1.0.8",
+    Date => "January 14, 2019",
     Authors => {
         {Name => "Justin Chen",
-	 Email => "jchen@math.berkeley.edu",
+	 Email => "jchen@math.gatech.edu",
          HomePage => "https://people.math.gatech.edu/~jchen646"},
         {Name => "Joe Kileel",
-	 Email => "jkileel@princeton.edu",
+	 Email => "jkileel@math.princeton.edu",
 	 HomePage => "https://web.math.princeton.edu/~jkileel/"}
         },
     PackageImports => {},
@@ -48,7 +48,6 @@ newPackage("NumericalImplicitization",
     }
 
 -- software options (none for sample nor refine): default is M2engine throughout
--- n.b.: precision loss from LAPACK in SVD computation
 -- Magic numbers: 8 (and 3) decimal places in extractImageEquations, 10 in fiberSlice, 50 in smartTrack (for parallelization), 4 (translationMagnitude) in doTraceTest
 
 
@@ -71,62 +70,69 @@ net PseudoWitnessSet := W -> (
 
 
 checkRings = method(Options => {symbol IsGraded => true})
--- Turns F to a list of polynomials, checks if the underlying coefficient fields of F and I are the same complex field, and converts F, I to the affine cone if IsGraded is false
-checkRings (Thing, Ideal) := Sequence => opts -> (F, I) -> (
-    if class F === RingMap then F = F.matrix;
-    if class F === Matrix then F = flatten entries F;
-    if not class F === List then error "Expected map to be given by a list of polynomials";
-    if not all(F, f -> ring f === ring I) then error "Expected same rings for ideal and map";
-    if not class coefficientRing ring I === ComplexField then print "Warning: expected coefficient field to be complex numbers";
+-- Turns F to a matrix of polynomials, checks if the rings of F and I agree and have floating point arithmetic, and converts F, I to the affine cone if IsGraded is false
+checkRings (Matrix, Ideal) := Sequence => opts -> (F, I) -> (
+    k := coefficientRing ring I;
+    -- if class F === RingMap then F = F.matrix;
+    -- if class F === List then F = matrix{F};
+    if not numrows F == 1 then error "Expected map to be given by a 1-row matrix of polynomials";
+    if not ring F === ring I then error "Expected same rings for ideal and map";
+    if not instance(class(1_k), InexactFieldFamily) then error "Expected coefficient field with floating point arithmetic";
     if not opts.IsGraded then (
         t := getSymbol "t";
-        R := (coefficientRing ring I)(monoid[append(gens ring I, t)]);
+        R := k(monoid[append(gens ring I, t)]);
         toR := map(R, ring I);
-        ((last gens R)*append(apply(F, f -> toR(f)), 1_R), toR(I))
+        ((last gens R)*(toR F | matrix{{1_R}}), toR(I))
+        -- ((last gens R)*append(apply(F, f -> toR(f)), 1_R), toR(I))
     ) else (F, I)
 )
 
 
-numericalSourceSample = method(Options => {Software => M2engine})
-numericalSourceSample (Ideal, ZZ) := List => opts -> (I, sampleSize) -> ( --outputs a list of random sample points of V(I)
-    if I == 0 then apply(sampleSize, i -> point{apply(gens(ring(I)), x -> random coefficientRing(ring(I)))})
-    else numericalSourceSample(I, first components(numericalIrreducibleDecomposition(I, opts)), sampleSize)
-)
+numericalSourceSample = method(Options => {Software => M2engine}) --outputs a list of random sample points of V(I)
 numericalSourceSample (Ideal, Thing, ZZ) := List => opts -> (I, W, sampleSize) -> (
-    if I == 0 then return numericalSourceSample(I, sampleSize);
+    if I == 0 then return apply(sampleSize, i -> point{apply(gens(ring(I)), x -> random coefficientRing(ring(I)))});
     samplePoints := toList(1..sampleSize)/(i -> sample(W));
     if precision(ring(I)) <= precision(ring(first (first samplePoints)#Coordinates)) then return samplePoints;
     refine(polySystem(I_*), samplePoints, Bits => precision(ring(I)))
 )
-numericalSourceSample (Ideal) := Point => opts -> (I) -> first numericalSourceSample(I, 1, opts)
-numericalSourceSample (Ideal, Thing) := Point => opts -> (I, W) -> first numericalSourceSample(I, W, 1, opts)
+numericalSourceSample (Ideal, Thing) := List => opts -> (I, W) -> numericalSourceSample(I, W, 1, opts)
+numericalSourceSample (Ideal, ZZ) := List => opts -> (I, sampleSize) -> numericalSourceSample(I, if I == 0 then null else first components(numericalIrreducibleDecomposition(I, opts)), sampleSize)
+numericalSourceSample (Ideal) := List => opts -> (I) -> numericalSourceSample(I, 1, opts)
 
     
 numericalImageSample = method(Options => {Software => M2engine})
-numericalImageSample (Thing, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> (
+numericalImageSample (Matrix, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> (
     (F, I) = checkRings(F, I);
-    apply(numericalEval(F, numericalSourceSample(I, sampleSize, opts), false), p -> point p)
+    numericalEval(F, numericalSourceSample(I, sampleSize, opts), false) /point
 )
-numericalImageSample (Thing, Ideal) := Point => opts -> (F, I) -> first numericalImageSample(F, I, 1, opts)
+numericalImageSample (Matrix, Ideal) := List => opts -> (F, I) -> numericalImageSample(F, I, 1, opts)
+numericalImageSample (List, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> numericalImageSample(matrix{F}, I, sampleSize, opts)
+numericalImageSample (List, Ideal) := List => opts -> (F, I) -> numericalImageSample(matrix{F}, I, opts)
+numericalImageSample (RingMap, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> numericalImageSample(F.matrix, I, sampleSize, opts)
+numericalImageSample (RingMap, Ideal) := List => opts -> (F, I) -> numericalImageSample(F.matrix, I, opts)
 
 
 numericalDimensions = method(Options => {Software => M2engine})
-numericalDimensions (Thing, Ideal, Thing) := List => opts -> (F, I, p) -> ( --outputs {dim(V(I)), dim(F(V(I))}
+numericalDimensions (Matrix, Ideal, Thing) := List => opts -> (F, I, p) -> ( --outputs {dim(V(I)), dim(F(V(I))}
     (F, I) = checkRings(F, I);
-    if p === {} then p = numericalSourceSample(I, Software => opts.Software);
+    if p === {} then p = first numericalSourceSample(I, Software => opts.Software);
     p0 := 1/norm(2, matrix p)*(matrix p);
-    dF := sub(transpose(jacobian(matrix{F})), p0);
+    dF := sub(transpose(jacobian(F)), p0);
     if I == 0 then return {#gens ring I, #gens ring I - numericalNullity(dF, false)};
     sourceJacobian := sub(transpose(jacobian(I)), p0);
     sourceDim := numericalNullity(sourceJacobian, false);
     {sourceDim, sourceDim - numericalNullity(sourceJacobian || dF, false)}
 )
-numericalDimensions (Thing, Ideal) := ZZ => opts -> (F, I) -> numericalDimensions(F, I, {}, opts)
+numericalDimensions (Matrix, Ideal) := ZZ => opts -> (F, I) -> numericalDimensions(F, I, {}, opts)
 
 
 numericalImageDim = method(Options => {Software => M2engine})
-numericalImageDim (Thing, Ideal, Point) := ZZ => opts -> (F, I, p) -> last numericalDimensions(F, I, p, opts)
-numericalImageDim (Thing, Ideal) := ZZ => opts -> (F, I) -> last numericalDimensions(F, I, opts)
+numericalImageDim (Matrix, Ideal, Point) := ZZ => opts -> (F, I, p) -> last numericalDimensions(F, I, p, opts)
+numericalImageDim (Matrix, Ideal) := ZZ => opts -> (F, I) -> last numericalDimensions(F, I, opts)
+numericalImageDim (List, Ideal, Point) := ZZ => opts -> (F, I, p) -> last numericalDimensions(matrix{F}, I, p, opts)
+numericalImageDim (List, Ideal) := ZZ => opts -> (F, I) -> last numericalDimensions(matrix{F}, I, opts)
+numericalImageDim (RingMap, Ideal, Point) := ZZ => opts -> (F, I, p) -> last numericalDimensions(F.matrix, I, p, opts)
+numericalImageDim (RingMap, Ideal) := ZZ => opts -> (F, I) -> last numericalDimensions(F.matrix, I, opts)
 
 
 -- converts M to a list of 1-element lists of row matrices (to normalize rows easily)
@@ -170,11 +176,11 @@ numericalHilbertFunction = method(Options => {
 	Threshold => 1e4, 
 	Verbose => true, 
 	IsGraded => true})
-numericalHilbertFunction (Thing, Ideal, List, ZZ) := NumericalInterpolationTable => opts -> (F, I, sampleImagePoints, d) -> ( --outputs a degree d interpolation table for F(V(I))
+numericalHilbertFunction (Matrix, Ideal, List, ZZ) := NumericalInterpolationTable => opts -> (F, I, sampleImagePoints, d) -> ( --outputs a degree d interpolation table for F(V(I))
     (F, I) = checkRings(F, I, IsGraded => opts.IsGraded);
     if not opts.IsGraded then sampleImagePoints = apply(sampleImagePoints, p -> {append(p#Coordinates, 1_(coefficientRing ring I))});
     y := getSymbol "y";
-    allMonomials := basis(d, (coefficientRing ring I)[y_0..y_(#F-1)]);
+    allMonomials := basis(d, (coefficientRing ring I)[y_0..y_(numcols F-1)]);
     N := numcols allMonomials;
     if #sampleImagePoints < N then (
         if opts.Verbose then (
@@ -182,7 +188,7 @@ numericalHilbertFunction (Thing, Ideal, List, ZZ) := NumericalInterpolationTable
             time sampleImagePoints = join(sampleImagePoints, numericalImageSample(F, I, N - #sampleImagePoints, Software => opts.Software));
         ) else sampleImagePoints = join(sampleImagePoints, numericalImageSample(F, I, N - #sampleImagePoints, Software => opts.Software));
     );
-    sampleImagePoints = apply(sampleImagePoints, p -> (C := matrix p; 1/norm(2,C)*C));
+    sampleImagePoints = apply(sampleImagePoints/matrix, p -> 1/norm(2,p)*p);
     if opts.Verbose then (
         print "Creating interpolation matrix ...";
         time A := apply(sampleImagePoints, p -> {sub(allMonomials, p)});
@@ -198,11 +204,15 @@ numericalHilbertFunction (Thing, Ideal, List, ZZ) := NumericalInterpolationTable
 	symbol map => F
     }
 )
-numericalHilbertFunction (Thing, Ideal, ZZ) := NumericalInterpolationTable => opts -> (F, I, d) -> numericalHilbertFunction(F, I, {}, d, opts)
+numericalHilbertFunction (Matrix, Ideal, ZZ) := NumericalInterpolationTable => opts -> (F, I, d) -> numericalHilbertFunction(F, I, {}, d, opts)
+numericalHilbertFunction (List, Ideal, List, ZZ) := NumericalInterpolationTable => opts -> (F, I, sampleImagePoints, d) -> numericalHilbertFunction(matrix{F}, I, sampleImagePoints, d, opts)
+numericalHilbertFunction (List, Ideal, ZZ) := NumericalInterpolationTable => opts -> (F, I, d) -> numericalHilbertFunction(matrix{F}, I, {}, d, opts)
+numericalHilbertFunction (RingMap, Ideal, List, ZZ) := NumericalInterpolationTable => opts -> (F, I, sampleImagePoints, d) -> numericalHilbertFunction(F.matrix, I, sampleImagePoints, d, opts)
+numericalHilbertFunction (RingMap, Ideal, ZZ) := NumericalInterpolationTable => opts -> (F, I, d) -> numericalHilbertFunction(F.matrix, I, {}, d, opts)
 
 
-realPartMatrix := A -> matrix table(numrows A, numcols A, (i,j) -> realPart A_(i,j))
-imPartMatrix := A -> matrix table(numrows A, numcols A, (i,j) -> imaginaryPart A_(i,j))
+realPartMatrix := A -> matrix apply(entries A, r -> r/realPart)
+imPartMatrix := A -> matrix apply(entries A, r -> r/imaginaryPart)
 
 
 extractImageEquations = method(Options => {symbol Threshold => 5})
@@ -213,69 +223,73 @@ extractImageEquations NumericalInterpolationTable := Matrix => opts -> T -> (
     D := submatrix(LLL(id_(ZZ^(numcols C)) || C), toList (0..<numcols T.interpolationBasis), toList(0..<T.hilbertFunctionValue));
     transpose(T.interpolationBasis*sub(D, ring T.interpolationBasis))
 )
-extractImageEquations (Thing, Ideal, ZZ) := Matrix => opts -> (F, I, d) -> extractImageEquations numericalHilbertFunction(F, I, d)
+extractImageEquations (Matrix, Ideal, ZZ) := Matrix => opts -> (F, I, d) -> extractImageEquations numericalHilbertFunction(F, I, d)
+extractImageEquations (List, Ideal, ZZ) := Matrix => opts -> (F, I, d) -> extractImageEquations numericalHilbertFunction(matrix{F}, I, d)
+extractImageEquations (RingMap, Ideal, ZZ) := Matrix => opts -> (F, I, d) -> extractImageEquations numericalHilbertFunction(F.matrix, I, d)
 
 
 round (ZZ, ZZ) := ZZ => (n, x) -> x
 round (ZZ, CC) := CC => (n, x) -> round(n, realPart x) + ii*round(n, imaginaryPart x)
 round (ZZ, BasicList) := BasicList => (n, L) -> L/round_n
 round (ZZ, Matrix) := Matrix => (n, M) -> matrix(entries M/round_n)
-round (ZZ, RingElement) := RingElement => (n, f) -> (first coefficients f)*round(n, lift(last coefficients f, coefficientRing ring f))
+round (ZZ, RingElement) := RingElement => (n, f) -> (
+    C := coefficients f;
+    (C#0)*round(n, lift(C#1, coefficientRing ring f))
+)
 
 
 numericalImageDegree = method(Options => {
 	IsGraded => true,
 	symbol maxAttempts => 5,
+        symbol maxPoints => infinity,
         symbol maxThreads => 1,
         Software => M2engine,
         symbol repeats => 3,
         symbol traceThreshold => 1e-5,
 	symbol Threshold => 5,
 	Verbose => true})
-numericalImageDegree (Thing, Ideal, Thing, Point) := PseudoWitnessSet => opts -> (F, I, W, sourcePoint) -> ( --outputs a pseudo-witness set for F(V(I))
-    local imagePoint, local pairTable, local startSystem;
+numericalImageDegree (Matrix, List, List, Thing) := PseudoWitnessSet => opts -> (F, sourceData, pointPairs, sliceData) -> ( --outputs a pseudo-witness set for F(V(I))
+    local imagePointString, local pairTable, local startSystem;
+    I := sourceData#0;
+    W := sourceData#1;
     y := getSymbol "y";
-    targetRing := (coefficientRing(ring(I)))[y_1..y_(#F)];
+    targetRing := (coefficientRing(ring(I)))[y_1..y_(numcols F)];
+    if #pointPairs == 0 then error "Expected source point";
+    sourcePoint := pointPairs#0#0;
     dims := numericalDimensions(F, I, sourcePoint);
     numFailedTraceTests := 0;
     traceResult := opts.traceThreshold + 1;
     while not traceResult < opts.traceThreshold and numFailedTraceTests < opts.maxAttempts do (
-        if numFailedTraceTests > 0 and not W === null then (
-	    if W === {} and not I == 0 then W = first components numericalIrreducibleDecomposition(I, Software => opts.Software);
-	    sourcePoint = numericalSourceSample(I, W);
-	);
-        -- pullbackSliceData := randomCombinations(F, last dims, true);
-        pullbackSliceData := randomCombinations(matrix{F}, last dims, false);
-        -- sliceTranslation := transpose sub(matrix{last pullbackSliceData}, matrix sourcePoint);
-        -- pullbackSlice := (last pullbackSliceData) - flatten entries sliceTranslation;
-        -- sliceCoefficients := promote((first pullbackSliceData) | (-1)*sliceTranslation, targetRing);
-        sliceTranslation := sub(matrix{last pullbackSliceData}, matrix sourcePoint);
-        pullbackSlice := (last pullbackSliceData) - flatten entries sliceTranslation;
-        sliceCoefficients := sub((first pullbackSliceData) || (-1)*sliceTranslation, targetRing);
+        if numFailedTraceTests > 0 and not W === null and sliceData === null then (
+	    if not I == 0 then W = first components numericalIrreducibleDecomposition(I, Software => opts.Software);
+	    sourcePoint = first numericalSourceSample(I, W);
+	);       
+        if sliceData === null then (
+            pullbackSliceData := randomCombinations(F, last dims, false);
+            sliceTranslation := sub(matrix{last pullbackSliceData}, matrix sourcePoint);
+            pullbackSlice := (last pullbackSliceData) - flatten entries sliceTranslation;
+            sliceCoefficients := sub((first pullbackSliceData) || (-1)*sliceTranslation, targetRing);
+        ) else (
+            if numFailedTraceTests == 0 then (
+                pullbackSlice = flatten entries sub(sliceData, F);
+                sliceCoefficients = sub(fold(flatten entries sliceData /coefficients/last, L -> L#0 | L#1), targetRing);
+                if not all(pointPairs, pair -> clean((10.0)^(-opts.Threshold), (matrix last pair | matrix{{1_(coefficientRing(ring(I)))}}) * sub(sliceCoefficients, coefficientRing(ring(I)))) == 0) then error "Expected input points to lie on input slice";
+            );
+        );
         fiberSlice := if first dims > last dims then (
-            -- newFiberSlice := randomCombinations(gens(ring(I)) | {10_(ring(I))}, (first dims) - (last dims), false);
             newFiberSlice := last randomCombinations(vars(ring(I)), first dims - last dims, true);
             newFiberSlice - flatten entries sub(matrix{newFiberSlice}, matrix sourcePoint)
         ) else {};
-	-- squaredUpSource := (if I == 0 then {} else randomCombinations(I_*, #gens(ring(I)) - first dims, false));
         squaredUpSource := if I == 0 then {} else last randomCombinations(gens I, #gens(ring(I)) - first dims, false);
 	newStartSystem := squaredUpSource | fiberSlice | pullbackSlice;
-        if numFailedTraceTests > 0 then (
-            newTrackedPairs := numericalEval(F, smartTrack(startSystem, newStartSystem, (values pairTable)/first, true, opts), true);
-            pairTable = new MutableHashTable;
-            for newPair in newTrackedPairs do (
-                imagePoint = toString round(opts.Threshold, last newPair);
-                if not pairTable#?imagePoint then pairTable#imagePoint = newPair;
-            );
-        ) else pairTable = new MutableHashTable;
-        newSamplePair := first numericalEval(F, {sourcePoint}, true);
-        imagePoint = toString round(opts.Threshold, last newSamplePair);
-        if not pairTable#?imagePoint then (
-            pairTable#imagePoint = newSamplePair;
-            if opts.Verbose and numFailedTraceTests > 0 then print "Added new image point";
-        );
+        newPairs := if numFailedTraceTests > 0 then numericalEval(F, smartTrack(startSystem, newStartSystem, (values pairTable)/first, true, opts), true) else pointPairs/(pair -> (pair#0, matrix pair#1));
+        pairTable = new MutableHashTable;
+        for newPair in newPairs do (
+            imagePointString = toString round(opts.Threshold, last newPair);
+            if not pairTable#?imagePointString then pairTable#imagePointString = newPair;
+        );       
 	startSystem = newStartSystem;
-        pointPairs := monodromyLoop(F, last dims, startSystem, pairTable, opts);
+        pointPairs = monodromyLoop(F, last dims, startSystem, pairTable, opts);
         if opts.Verbose then print("Running trace test ...");
         traceResult = doTraceTest(F, last dims, startSystem, pointPairs, opts);
         if not traceResult < opts.traceThreshold then (
@@ -297,24 +311,34 @@ numericalImageDegree (Thing, Ideal, Thing, Point) := PseudoWitnessSet => opts ->
         symbol sourceEquations => I,
         symbol sourceSlice => transpose matrix{fiberSlice},
         symbol imageSlice => ((vars targetRing) | matrix{{1_targetRing}})*sliceCoefficients,
-        -- symbol imageSlice => sliceCoefficients*((transpose vars targetRing) || matrix{{1_targetRing}}),
-        symbol witnessPointPairs => VerticalList apply(pointPairs, pair -> (first pair, point last pair)),
-        -- symbol witnessPointPairs => VerticalList pointPairs,
+        symbol witnessPointPairs => VerticalList apply(pointPairs, pair -> (pair#0, point pair#1)),
         symbol witnessSet => W, 
 	symbol traceTest => traceResult
     }
 )
-numericalImageDegree (Thing, Ideal) := PseudoWitnessSet => opts -> (F, I) -> (
+numericalImageDegree (Matrix, Ideal) := PseudoWitnessSet => opts -> (F, I) -> (
     (F, I) = checkRings(F, I, IsGraded => opts.IsGraded);
     if opts.Verbose then print "Sampling point in source ...";
-    W := if I == 0 then {} else first components numericalIrreducibleDecomposition(I, Software => opts.Software);
-    numericalImageDegree(F, I, W, numericalSourceSample(I, W), opts)
+    W := if I == 0 then null else first components numericalIrreducibleDecomposition(I, Software => opts.Software);
+    numericalImageDegree(F, {I, W}, numericalEval(F, numericalSourceSample(I, W), true), null, opts)
 )
-numericalImageDegree(Thing, Ideal, Point) := PseudoWitnessSet => opts -> (F, I, p) -> (
+numericalImageDegree(Matrix, Ideal, Point) := PseudoWitnessSet => opts -> (F, I, p) -> numericalImageDegree(F, I, p, null, opts)
+numericalImageDegree(Matrix, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F, I, pointPairs, L) -> numericalImageDegree(F, {I, null}, pointPairs, L, opts)
+numericalImageDegree(Matrix, Ideal, Point, Thing) := PseudoWitnessSet => opts -> (F, I, p, L) -> ( -- point is specified, do not try to find witness set W
     (F, I) = checkRings(F, I, IsGraded => opts.IsGraded);
     if not opts.IsGraded then p = point{append(p#Coordinates, 1_(coefficientRing(ring(I))))};
-    numericalImageDegree(F, I, null, p, opts)
+    numericalImageDegree(F, {I, null}, numericalEval(F, {p}, true), L, opts)
 )
+numericalImageDegree (List, Ideal) := PseudoWitnessSet => opts -> (F, I) -> numericalImageDegree(matrix{F}, I, opts)
+numericalImageDegree (List, List, List, Thing) := PseudoWitnessSet => opts -> (F, sourceData, pointPairs, sliceData) -> numericalImageDegree(matrix{F}, sourceData, pointPairs, sliceData, opts)
+numericalImageDegree(List, Ideal, Point) := PseudoWitnessSet => opts -> (F, I, p) -> numericalImageDegree(matrix{F}, I, p, null, opts)
+numericalImageDegree(List, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F, I, pointPairs, L) -> numericalImageDegree(matrix{F}, I, pointPairs, L, opts)
+numericalImageDegree(List, Ideal, Point, Thing) := PseudoWitnessSet => opts -> (F, I, p, L) -> numericalImageDegree(matrix{F}, I, p, L, opts)
+numericalImageDegree (RingMap, Ideal) := PseudoWitnessSet => opts -> (F, I) -> numericalImageDegree(F.matrix, I, opts)
+numericalImageDegree (RingMap, List, List, Thing) := PseudoWitnessSet => opts -> (F, sourceData, pointPairs, sliceData) -> numericalImageDegree(F.matrix, sourceData, pointPairs, sliceData, opts)
+numericalImageDegree(RingMap, Ideal, Point) := PseudoWitnessSet => opts -> (F, I, p) -> numericalImageDegree(F.matrix, I, p, null, opts)
+numericalImageDegree(RingMap, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F, I, pointPairs, L) -> numericalImageDegree(F.matrix, I, pointPairs, L, opts)
+numericalImageDegree(RingMap, Ideal, Point, Thing) := PseudoWitnessSet => opts -> (F, I, p, L) -> numericalImageDegree(F.matrix, I, p, L, opts)
 
 
 smartTrack = method(Options => options numericalImageDegree)
@@ -339,13 +363,9 @@ smartTrack (List, List, List, Boolean) := List => opts -> (startSystem, targetSy
 
 
 numericalEval = method()
-numericalEval (List, List, Boolean) := List => (F, upstairsPoints, includeUpstairs) -> (
-    mapF := sub_(matrix{F});
-    evalPts := upstairsPoints/(p -> (p, mapF matrix p));
+numericalEval (Matrix, List, Boolean) := List => (F, upstairsPoints, includeUpstairs) -> (
+    evalPts := upstairsPoints/(p -> (p, sub(F, matrix p)));
     if includeUpstairs then evalPts else evalPts/last
-    -- matrixF := matrix{F};
-    -- if includeUpstairs then apply(upstairsPoints, p -> (p, sub(matrixF, matrix p)))
-    -- else apply(upstairsPoints, p -> sub(matrixF, matrix p))
 )
 
 
@@ -365,35 +385,35 @@ randomCombinations (List, ZZ, Boolean) := List => (polys, c, keepCoeffs) -> (
 
 
 monodromyLoop = method(Options => options numericalImageDegree)
-monodromyLoop (List, ZZ, List, MutableHashTable) := List => opts -> (F, imageDim, startSystem, pairTable) -> (
+monodromyLoop (Matrix, ZZ, List, MutableHashTable) := List => opts -> (F, imageDim, startSystem, pairTable) -> (
     numRepetitiveMonodromyLoops := 0;
     if opts.Verbose then print "Tracking monodromy loops ...";
     while numRepetitiveMonodromyLoops < opts.repeats do (
         previousNumImagePoints := #values pairTable;
-        -- intermediateSystem1 := drop(startSystem, -imageDim) | randomCombinations(F | {10_(ring(first(F)))}, imageDim, false);
-        intermediateSystem1 := drop(startSystem, -imageDim) | last randomCombinations(matrix{F}, imageDim, true);
+        intermediateSystem1 := drop(startSystem, -imageDim) | last randomCombinations(F, imageDim, true);
         intermediateSolutions1 := smartTrack(startSystem, intermediateSystem1, (values pairTable)/first, false, opts);
         if #intermediateSolutions1 > 0 then (
             endSolutions := smartTrack(intermediateSystem1, startSystem, intermediateSolutions1, false, opts);
             if #endSolutions > 0 then (
                 candidatePairs := numericalEval(F, endSolutions, true);
                 for newPair in candidatePairs do (
-                    imagePoint := toString round(opts.Threshold, last newPair);
-                    if not pairTable#?imagePoint then pairTable#imagePoint = newPair;
+                    imagePointString := toString round(opts.Threshold, last newPair);
+                    if not pairTable#?imagePointString then pairTable#imagePointString = newPair;
                 );
             );
         );
         if previousNumImagePoints < #values pairTable then numRepetitiveMonodromyLoops = 0
         else numRepetitiveMonodromyLoops = numRepetitiveMonodromyLoops + 1;
         if opts.Verbose then print ("Points found: " | #values pairTable);
+        if #values pairTable > opts.maxPoints then break;
     );
     values pairTable
 )
 
 
 doTraceTest = method(Options => options numericalImageDegree)
-doTraceTest (List, ZZ, List, List) := RR => opts -> (F, imageDim, startSystem, intersectionPointPairs) -> (
-    C := coefficientRing(ring(first F));
+doTraceTest (Matrix, ZZ, List, List) := RR => opts -> (F, imageDim, startSystem, intersectionPointPairs) -> (
+    C := coefficientRing(ring F);
     startUpstairsPoints := intersectionPointPairs/first;
     startDownstairsPoints := intersectionPointPairs/last;
     for translationMagnitude in {1,2,3,4,5,-1,6,-2} do (
@@ -426,21 +446,20 @@ isOnImage (PseudoWitnessSet, Point) := Boolean => opts -> (W, q) -> (
     if not ring q === coefficientRing ring I then error "Point must have coordinates in the coefficient ring of the ideal.";
     fiberSlice := flatten entries W.sourceSlice;
     targetVariables := gens ring(W.imageSlice);
-    pullbackSlice := flatten entries sub(W.imageSlice, apply(toList(0..<#targetVariables), i -> targetVariables#i => F#i));
-    -- squaredUpSource := (if I == 0 then {} else randomCombinations(I_*, #gens(ring(I)) - #fiberSlice - #pullbackSlice, false));
+    pullbackSlice := flatten entries sub(W.imageSlice, F);
     squaredUpSource := if I == 0 then {} else last randomCombinations(gens I, #gens(ring(I)) - #fiberSlice - #pullbackSlice, false);
     startUpstairsPoints := W.witnessPointPairs /first;
-    -- newPullbackSliceData := randomCombinations(F, #pullbackSlice, true);
-    newPullbackSliceData := randomCombinations(matrix{F}, #pullbackSlice, false);
+    newPullbackSliceData := randomCombinations(F, #pullbackSlice, false);
     sliceCoefficients := first newPullbackSliceData;
     newPullbackSlice := last newPullbackSliceData;
     newPullbackSlice = newPullbackSlice - flatten entries (promote(q, coefficientRing ring I) * sliceCoefficients);
-    -- newPullbackSlice = newPullbackSlice - flatten entries (sliceCoefficients * promote(transpose(q), coefficientRing(ring(I))));
     targetUpstairsPoints := smartTrack(squaredUpSource | fiberSlice | pullbackSlice, squaredUpSource | fiberSlice | newPullbackSlice, startUpstairsPoints, true, opts);
     imagePointTable := hashTable apply(numericalEval(F, targetUpstairsPoints, false), p -> round(opts.Threshold, p) => 0);
     imagePointTable#?(round(opts.Threshold, q))
 )
-isOnImage (Thing, Ideal, Point) := Boolean => opts -> (F, I, q) -> isOnImage(numericalImageDegree(F, I, opts), q, opts)
+isOnImage (Matrix, Ideal, Point) := Boolean => opts -> (F, I, q) -> isOnImage(numericalImageDegree(F, I, opts), q, opts)
+isOnImage (List, Ideal, Point) := Boolean => opts -> (F, I, q) -> isOnImage(matrix{F}, I, q, opts)
+isOnImage (RingMap, Ideal, Point) := Boolean => opts -> (F, I, q) -> isOnImage(F.matrix, I, q, opts)
 
 
 beginDocumentation()
@@ -454,31 +473,34 @@ doc ///
     	implicitization using numerical algebraic geometry
     Description
     	Text
-	    This package supports user-friendly calculation of basic invariants of the image of a polynomial 
-	    map. The computational techniques (interpolation, homotopy continuation and monodromy) come 
-            from numerical algebraic geometry.
+	    This package supports user-friendly calculation of basic invariants of the image 
+            of a polynomial map. The computational techniques (interpolation, homotopy 
+            continuation and monodromy) come from numerical algebraic geometry.
 
-	    Many varieties of interest in algebraic geometry and its applications are usefully described as 
-	    images of polynomial maps, via a parametrization. Implicitization is the process of converting 
-	    a parametric description of a variety into an intrinsic, or implicit, description. Classically, 
-	    implicitization refers to the procedure of computing the defining equations of a parametrized 
-	    variety, and in theory this is accomplished by finding the kernel of a ring homomorphism, via 
-	    Gr&ouml;bner bases. In practice however, symbolic Gr&ouml;bner basis computations are often 
-            time-consuming, even for medium-scale problems, and do not scale well with respect to the size 
-            of the input.
+	    Many varieties of interest in algebraic geometry and its applications are usefully 
+            described as images of polynomial maps, via a parametrization. Implicitization is the
+            process of converting a parametric description of a variety into an intrinsic, or implicit,
+            description. Classically, implicitization refers to the procedure of computing the defining
+            equations of a parametrized variety, and in theory this is accomplished by finding the
+            kernel of a ring homomorphism, via Gr&ouml;bner bases. In practice however, 
+            symbolic Gr&ouml;bner basis computations are often time consuming, even for 
+            medium scale problems, and do not scale well with respect to the size of the input.
 
-	    Despite this, one would often like to know basic information about a parametrized variety, even 
-	    when symbolic methods are prohibitively expensive. Examples of 
-	    such information are discrete invariants such as the @TO2{numericalImageDim, "dimension"}@, the 
-	    @TO2{numericalImageDegree, "degree"}@, or @TO2{numericalHilbertFunction, "Hilbert function"}@ 
+	    Despite this, one would often like to know basic information about a parametrized 
+            variety, even when symbolic methods are prohibitively expensive. Examples of 
+	    such information are discrete invariants such as the 
+            @TO2{numericalImageDim, "dimension"}@, the 
+	    @TO2{numericalImageDegree, "degree"}@, or 
+            @TO2{numericalHilbertFunction, "Hilbert function"}@ 
 	    values. Other examples include Boolean tests, for example whether a particular point 
-	    @TO2{isOnImage, "lies on"}@ a parametrized variety. The goal of this package is to provide such 
-	    information; in other words to numerically implicitize a parametrized variety.
+	    @TO2{isOnImage, "lies on"}@ a parametrized variety. The goal of this package is to
+            provide such information; in other words to numerically implicitize a parametrized variety.
     
 	    {\em NumericalImplicitization} builds on existing numerical algebraic geometry software: 
-	    @TO2{NumericalAlgebraicGeometry,"NAG4M2"}@, @TO Bertini@ and @TO PHCpack@. The user
-            may specify any of these to use for path tracking and point sampling; by default, the native engine 
-	    NAG4M2 is used. Currently, all methods are implemented for reduced and irreducible varieties.
+	    @TO2{NumericalAlgebraicGeometry,"NAG4M2"}@, @TO Bertini@ and 
+            @TO PHCpack@. The user may specify any of these to use for path tracking and 
+            point sampling; by default, the native engine NAG4M2 is used. Currently, all methods 
+            are implemented for reduced and irreducible varieties.
     
 	    {\bf Reference:} 
             
@@ -509,21 +531,21 @@ doc ///
 	    of sample points on $V(I)$
     Description
 	Text
-	    Computes a list of sample points on a variety numerically. If $I$ is the zero ideal 
-	    in a polynomial ring of dimension $n$, then an $n$-tuple of random elements in the 
-	    ground field is returned. Otherwise, a @TO2{numericalIrreducibleDecomposition, 
-            "numerical irreducible decomposition"}@ of $I$ is computed, which is then used 
-            to sample points.
+	    This method computes a list of sample points on a variety numerically. If $I$ is the 
+            zero ideal in a polynomial ring of dimension $n$, then an $n$-tuple of random 
+            elements in the ground field is returned. Otherwise, a 
+            @TO2{numericalIrreducibleDecomposition, "numerical irreducible decomposition"}@ 
+            of $I$ is computed, which is then used to sample points.
 
-	    If $s$ is unspecified, then it is assumed that $s = 1$. In this case, the single 
-	    point is returned, rather than a list.
+	    If $s$ is unspecified, then it is assumed that $s = 1$. 
 
 	    In the example below, we sample a point from $A^3$ and then $3$ points from
 	    $V(x^2 + y^2 + z^2 - 1)$ in $A^3$.
             
         Example
             R = CC[x,y,z];
-            numericalSourceSample(ideal 0_R)
+            samp = numericalSourceSample(ideal 0_R)
+            samp#0
             I = ideal(x^2 + y^2 + z^2 - 1);
             numericalSourceSample(I, 3)
     Caveat
@@ -537,16 +559,20 @@ doc ///
 doc ///
     Key
     	numericalImageSample
-	(numericalImageSample, Thing, Ideal, ZZ)
-	(numericalImageSample, Thing, Ideal)
+	(numericalImageSample, Matrix, Ideal, ZZ)
+	(numericalImageSample, Matrix, Ideal)
+        (numericalImageSample, List, Ideal, ZZ)
+	(numericalImageSample, List, Ideal)
+        (numericalImageSample, RingMap, Ideal, ZZ)
+	(numericalImageSample, RingMap, Ideal)
     Headline
     	samples general points on the image of a variety
     Usage
     	numericalImageSample(F, I, s)
 	numericalImageSample(F, I)
     Inputs
-    	F:Thing
-	    a list, or matrix, or ring map, specifying a map
+    	F:
+	    a @TO2{Matrix, "matrix"}@, or @TO2{List, "list"}@, or @TO2{RingMap, "ring map"}@, specifying a map
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
 	s:ZZ
@@ -556,11 +582,10 @@ doc ///
 	    of sample points on $F(V(I)))$
     Description
 	Text
-	    Computes a list of sample points on the image of a variety numerically. 
-	    This function calls @TO numericalSourceSample@.
+	    This method computes a list of sample points on the image of a variety numerically. 
+	    This calls @TO numericalSourceSample@.
 
-	    If $s$ is unspecified, then it is assumed that $s = 1$. In this case, 
-	    the single point is returned, rather than a list.
+	    If $s$ is unspecified, then it is assumed that $s = 1$.
 
 	    The following samples a point from the twisted cubic. We then 
             independently verify that this point does lie on the twisted cubic.
@@ -568,7 +593,7 @@ doc ///
         Example
             R = CC[s,t];
             F = {s^3,s^2*t,s*t^2,t^3};
-            p = numericalImageSample(F, ideal 0_R)
+            p = first numericalImageSample(F, ideal 0_R)
             A = matrix{p#Coordinates_{0,1,2}, p#Coordinates_{1,2,3}};
             numericalRank A == 1
     	Text
@@ -589,16 +614,20 @@ doc ///
 doc ///
     Key
     	numericalImageDim
-	(numericalImageDim, Thing, Ideal, Point)
-	(numericalImageDim, Thing, Ideal)
+	(numericalImageDim, Matrix, Ideal, Point)
+	(numericalImageDim, Matrix, Ideal)
+        (numericalImageDim, List, Ideal, Point)
+	(numericalImageDim, List, Ideal)
+        (numericalImageDim, RingMap, Ideal, Point)
+	(numericalImageDim, RingMap, Ideal)
     Headline
     	computes the dimension of the image of a variety
     Usage
     	numericalImageDim(F, I, p)
 	numericalImageDim(F, I)
     Inputs
-    	F:Thing
-	    a list, or matrix, or ring map, specifying a map
+    	F:
+	    a @TO2{Matrix, "matrix"}@, or @TO2{List, "list"}@, or @TO2{RingMap, "ring map"}@, specifying a map
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
 	p:Point
@@ -631,28 +660,26 @@ doc ///
         
             Here is an example where direct symbolic computation fails to terminate quickly. 
 	    Part of the Alexander-Hirschowitz theorem states that the $14$th secant 
-	    variety of the $4$th Veronese of $\mathbb{P}^4$ has affine dimension $69$, rather than 
-	    the expected $14*4 + 13 + 1 = 70$. We numerically verify this below:
+	    variety of the $4$th Veronese of $P^4$ has affine dimension $69$, rather than 
+	    the expected $14*4 + 13 + 1 = 70$. See J. Alexander, A. Hirschowitz, $Polynomial
+            interpolation in several variables$, J. Alg. Geom. 4(2) (1995), 201-222. We 
+            numerically verify this below.
             
         Example
             R = CC[a_(1,1)..a_(14,5)];
             F = sum(1..14, i -> basis(4, R, Variables=>toList(a_(i,1)..a_(i,5))));
             time numericalImageDim(F, ideal 0_R)
-    	Text
-        
-	    {\bf Reference} 
-            
-            [1] J. Alexander, A. Hirschowitz, 
-            Polynomial interpolation in several variables.
-            {\it J. Alg. Geom.} 
-            {\bf 4} (2) (1995), 201-222.
 ///
 
 doc ///
     Key
     	numericalHilbertFunction
-	(numericalHilbertFunction, Thing, Ideal, List, ZZ)
-	(numericalHilbertFunction, Thing, Ideal, ZZ)
+	(numericalHilbertFunction, Matrix, Ideal, List, ZZ)
+	(numericalHilbertFunction, Matrix, Ideal, ZZ)
+        (numericalHilbertFunction, List, Ideal, List, ZZ)
+	(numericalHilbertFunction, List, Ideal, ZZ)
+        (numericalHilbertFunction, RingMap, Ideal, List, ZZ)
+	(numericalHilbertFunction, RingMap, Ideal, ZZ)
         [numericalHilbertFunction, Threshold]
     Headline
     	computes the values of the Hilbert function for the image of a variety
@@ -660,8 +687,8 @@ doc ///
     	numericalHilbertFunction(F, I, S, d)
 	numericalHilbertFunction(F, I, d)
     Inputs
-    	F:Thing
-	    a list, or matrix, or ring map, specifying a map
+    	F:
+	    a @TO2{Matrix, "matrix"}@, or @TO2{List, "list"}@, or @TO2{RingMap, "ring map"}@, specifying a map
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
 	S:List
@@ -680,7 +707,7 @@ doc ///
             circumvents the calculation of the kernel of the 
             associated ring map.
 
-            In order to speed up computation, the list S of points 
+            In order to speed up computation, the list $S$ of points 
             can be precomputed (see @TO numericalImageSample@). 
             This list of points can then be re-used in multiple 
             interpolation computations (which can yield a large 
@@ -728,10 +755,10 @@ doc ///
         isOnImage(..., IsGraded => true)
     Description
         Text
-            Specifies whether input (i.e. the ideal $I$ and map $F$)
+            This option specifies whether input (i.e. the ideal $I$ and map $F$)
             is graded. If false, input will be homogenized with respect 
             to a new variable, and internally the target variety is treated
-            as the affine cone over its projective closure. Default value is true.
+            as the affine cone over its projective closure. The default value is true.
     SeeAlso
         numericalHilbertFunction
         numericalImageDegree
@@ -752,7 +779,7 @@ doc ///
     	the class of all NumericalInterpolationTables
     Description
 	Text
-    	    This is a type of hashtable storing the output of a 
+    	    This is a type of hash table storing the output of a 
             polynomial interpolation computation, with the following keys: 
         Code
             UL {
@@ -801,7 +828,9 @@ doc ///
 doc ///
     Key
     	extractImageEquations
-        (extractImageEquations, Thing, Ideal, ZZ)
+        (extractImageEquations, Matrix, Ideal, ZZ)
+        (extractImageEquations, List, Ideal, ZZ)
+        (extractImageEquations, RingMap, Ideal, ZZ)
 	(extractImageEquations, NumericalInterpolationTable)
         [extractImageEquations, Threshold]
     Headline
@@ -812,8 +841,8 @@ doc ///
     Inputs
         T:NumericalInterpolationTable
             a numerical interpolation table for $F(V(I))$ of degree $d$
-    	F:Thing
-	    a list, or matrix, or ring map, specifying a map
+    	F:
+	    a @TO2{Matrix, "matrix"}@, or @TO2{List, "list"}@, or @TO2{RingMap, "ring map"}@, specifying a map
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
     	d:ZZ
@@ -825,13 +854,13 @@ doc ///
 	Text
 	    Finds (approximate) implicit degree $d$ equations for the image of a variety. 
             This is done via a numerical interpolation computation for the image, and the
-            LLL algorithm.
+            @TO LLL@ algorithm.
 
 	    If a numerical interpolation table has already been computed, then 
             to avoid repetitive calculation one may run this function with the interpolation 
             table as input.
 
-            We determine the defining quadrics of the twisted cubic, as follows:
+            We determine the defining quadrics of the twisted cubic, as follows.
             
         Example
             R = CC[s,t]
@@ -839,7 +868,7 @@ doc ///
             extractImageEquations(F, ideal 0_R, 2)
         Text
         
-            Here is how to do the same computation symbolically:
+            Here is how to do the same computation symbolically.
             
         Example
             transpose gens ker map(QQ[s,t], QQ[y_0..y_3], {s^3,s^2*t,s*t^2,t^3})
@@ -855,7 +884,7 @@ doc ///
 	    extractImageEquations T
         Text
         
-    	    {\tt Threshold} sets the threshold for rounding the interpolation matrix. 
+    	    The option {\tt Threshold} sets the threshold for rounding the interpolation matrix. 
             If this option has value $n$, then the interpolation matrix will be rounded
             to $n$ decimal digits, after which LLL will be performed. The default value is $8$.
     SeeAlso
@@ -866,13 +895,27 @@ doc ///
 doc ///
     Key
     	numericalImageDegree
-	(numericalImageDegree, Thing, Ideal, Thing, Point)
-	(numericalImageDegree, Thing, Ideal, Point)
-	(numericalImageDegree, Thing, Ideal)
+	(numericalImageDegree, Matrix, List, List, Thing)
+        (numericalImageDegree, Matrix, Ideal)
+	(numericalImageDegree, Matrix, Ideal, Point)
+	(numericalImageDegree, Matrix, Ideal, List, Thing)
+        (numericalImageDegree, Matrix, Ideal, Point, Thing)
+        (numericalImageDegree, List, List, List, Thing)
+        (numericalImageDegree, List, Ideal)
+	(numericalImageDegree, List, Ideal, Point)
+	(numericalImageDegree, List, Ideal, List, Thing)
+        (numericalImageDegree, List, Ideal, Point, Thing)
+        (numericalImageDegree, RingMap, List, List, Thing)
+        (numericalImageDegree, RingMap, Ideal)
+	(numericalImageDegree, RingMap, Ideal, Point)
+	(numericalImageDegree, RingMap, Ideal, List, Thing)
+        (numericalImageDegree, RingMap, Ideal, Point, Thing)
         repeats
     	[numericalImageDegree, repeats]
         maxAttempts
     	[numericalImageDegree, maxAttempts]
+        maxPoints
+    	[numericalImageDegree, maxPoints]
         traceThreshold
     	[numericalImageDegree, traceThreshold]
     	[numericalImageDegree, Threshold]
@@ -883,8 +926,8 @@ doc ///
     	numericalImageDegree(F, I, p)
 	numericalImageDegree(F, I)
     Inputs
-    	F:Thing
-	    a list, or matrix, or ring map, specifying a map
+    	F:
+	    a @TO2{Matrix, "matrix"}@, or @TO2{List, "list"}@, or @TO2{RingMap, "ring map"}@, specifying a map
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
 	p:Point
@@ -897,7 +940,6 @@ doc ///
 	Text
 	    This method computes the degree of the image of a variety, 
             along with a @TO2{PseudoWitnessSet, "pseudo-witness set"}@
-            (cf. Definition 4 in [1])
             for it, by tracking monodromy loops with homotopy continuation 
             and then applying the trace test. If the trace test fails, only a lower 
             bound for the degree and an incomplete pseudo-witness set is 
@@ -922,6 +964,8 @@ doc ///
             with defining equation known as Strassen's invariant,
             and it is also a defective secant variety (meaning its dimension is less
             than expected). Here, the parametrization has $10$ dimensional fibers.
+	    For more on this example, see V. Strassen, $The asymptotic spectrum of tensors$, 
+	    J. Reine Angew. Math. 384 (1988), 102-152.
             
         CannedExample
             i6 : R = CC[a_(0,0)..a_(3,2), b_(0,0)..b_(3,2), c_(0,0)..c_(3,2)];
@@ -973,41 +1017,32 @@ doc ///
             passes and the degree of the twisted cubic is correctly computed to be $3$.
             
         Example
-            setRandomSeed 6
+            setRandomSeed 10
             R = CC[s,t]
             F = basis(3, R)
             numericalImageDegree(F, ideal 0_R)
         Text
         
-            We compare this with the native Macaulay2 function {\tt degree} (using
+            We compare this with the native $Macaulay2$ function {\tt degree} (using
             symbolic computation).
             
         Example
             degree ker map(QQ[s,t], QQ[y_0..y_3], {s^3,s^2*t,s*t^2,t^3})
         Text
-        
-    	    {\tt traceThreshold} sets the threshold for a pseudo-witness set to pass 
+            
+            The option {\tt maxPoints} sets the maximum number of points that will be
+            found via monodromy. The default value is @TO infinity@.
+            
+    	    The option {\tt traceThreshold} sets the threshold for a pseudo-witness set to pass 
             the trace test. The trace test for a complete exact pseudo-witness set is 
             $0$; large nonzero values indicate failure (the larger the value, the worse 
             the failure). The default value is $1e-5$. Caution: setting the value of this 
             threshold too high may result in the trace test returning false positives.
 
-    	    {\tt Threshold} sets the threshold for determing point equality. 
+    	    The option {\tt Threshold} sets the threshold for determing point equality. 
             If this option has value $n$, then two points are considered equal iff their 
             first $n$ significant digits agree (equivalently, in scientific notation, the 
             exponents and first $n$ digits of the mantissa agree). The default value is $5$. 
-
-            {\bf Reference}
-            
-            [1] J. D. Hauenstein and A. J. Sommese, 
-            Witness sets of projections.
-            {\it Appl. Math. Comput.}
-            {\bf 217}(7) (2010), 3349-3354.
-            
-            [2] V. Strassen, 
-            The asymptotic spectrum of tensors.
-            {\it J. Reine. Angew. Math.}
-            {\bf 384} (1988), 102-152.
     SeeAlso
     	PseudoWitnessSet
 ///
@@ -1026,7 +1061,7 @@ doc ///
     	the class of all pseudo-witness sets
     Description
 	Text
-            This is a type of hashtable storing the output of a 
+            This is a type of hash table storing the output of a 
             pseudo-witness set computation using monodromy, 
             with the following keys:
         Code
@@ -1034,30 +1069,29 @@ doc ///
                 {TEX "\\bf isCompletePseudoWitnessSet: whether the 
                 pseudo-witness set has passed the trace test, according to the trace test threshold"},
                 TEX "\\bf degree: the number of image points found by monodromy",
-                TEX "\\bf map: the map F, of which the image is under consideration",
-                TEX "\\bf sourceEquations: the defining ideal I of the source variety",
+                TEX "\\bf map: the map $F$, of which the image is under consideration",
+                TEX "\\bf sourceEquations: the defining ideal $I$ of the source variety",
                 {TEX "\\bf sourceSlice: additional equations to form a zero-dimensional system 
                 (only needed if the map is not finite-to-one)"},
-                TEX "\\bf imageSlice: a general complementary-dimensional linear space to F(V(I))",
-                {TEX "\\bf witnessPointPairs: a VerticalList of 2-point sequences (p, F(p)), 
-                where p lies on V(I) and F(p) lies on imageSlice"},
-                {TEX "\\bf witnessSet: a witness set for V(I) 
-                (only computed if I is not the zero ideal)"}, 
+                TEX "\\bf imageSlice: a general complementary-dimensional linear space to $F(V(I))$",
+                {TEX "\\bf witnessPointPairs: a VerticalList of 2-point sequences $(p, F(p))$, 
+                where $p$ lies on $V(I)$ and $F(p)$ lies on imageSlice"},
+                {TEX "\\bf witnessSet: a witness set for $V(I)$ 
+                (only computed if $I$ is not the zero ideal)"}, 
                 TEX "\\bf traceTest: the result of the trace test applied to witnessPointPairs"
                 }
         Text
+	    For a discussion of pseudo-witness sets, 
+	    see J. D. Hauenstein and A. J. Sommese, $Witness sets of projections$, 
+	    Appl. Math. Comput. 217(7) (2010), 3349-3354. 
+	    
 	    The following example demonstrates the output for the 
-            $3$-uple embedding of $P^1$ into $P^3$, whose image is the twisted cubic:
+            degree-$3$ embedding of $P^1$ into $P^3$, whose image is the twisted cubic.
             
 	Example
             R = CC[s,t];
             W = numericalImageDegree(basis(3,R), ideal 0_R, Verbose => false);
             peek W
-        Text
-	    [1] J. D. Hauenstein and A. J. Sommese, 
-            Witness sets of projections.
-            {\it Appl. Math. Comput.}
-            {\bf 217}(7) (2010), 3349-3354.
     SeeAlso
     	numericalImageDegree
 ///
@@ -1105,11 +1139,11 @@ doc ///
         numericalImageDegree(..., maxThreads => allowableThreads)
     Description
 	Text
-    	    Sets the maximum number of processor threads that will be used 
+    	    This option sets the maximum number of processor threads that will be used 
             for parallel computation. This distributes the paths to track in each 
             monodromy loop among the processors as evenly as possible. 
             The value of this option should always be less than the 
-            value of the variable allowableThreads. Default value is $1$.
+            value of the variable allowableThreads. The default value is $1$.
     Caveat
         This feature is under development. Unexpected errors may be printed to 
         output while computing a pseudo-witness set - however, the loop will still 
@@ -1124,7 +1158,9 @@ doc ///
     Key
     	isOnImage
 	(isOnImage, PseudoWitnessSet, Point)
-	(isOnImage, Thing, Ideal, Point)
+	(isOnImage, Matrix, Ideal, Point)
+        (isOnImage, List, Ideal, Point)
+        (isOnImage, RingMap, Ideal, Point)
         [isOnImage, maxAttempts]
         [isOnImage, repeats]
         [isOnImage, traceThreshold]
@@ -1138,8 +1174,8 @@ doc ///
             a pseudo-witness set for $F(V(I))$
 	p:Point
 	    a point in the ambient space of $F(V(I))$
-        F:Thing
-	    a list, or matrix, or ring map, specifying a map
+        F:
+	    a @TO2{Matrix, "matrix"}@, or @TO2{List, "list"}@, or @TO2{RingMap, "ring map"}@, specifying a map
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
     Outputs
@@ -1162,7 +1198,7 @@ doc ///
             R = CC[x_(1,1)..x_(3,5)]; I = ideal 0_R;
             F = (minors(3, genericMatrix(R, 3, 5)))_*;
             W = numericalImageDegree(F, I, repeats => 2, Verbose => false);
-            q = numericalImageSample(F, I)
+            q = first numericalImageSample(F, I)
             isOnImage(W, q)
             isOnImage(W, point random(CC^1, CC^#F))
             isOnImage(W, point{{1_CC,0,0,0,0,0,0,0,0,0}})
@@ -1199,7 +1235,7 @@ doc ///
             If $\sigma_1 \ge \ldots \ge \sigma_n$ are the singular values of 
             $M$, then to establish numerical nullity we look for the first large gap 
             between two consecutive singular values. The gap between 
-            $\sigma_i$ and $\sigma_{i+1}$ is large if $\sigma_i/\sigma_{i+1} > $
+            $\sigma_i$ and $\sigma_{i+1}$ is large if $\sigma_i / \sigma_{i+1} > $
             @TO2{numericalHilbertFunction, "Threshold"}@.
             
             The optional input @TO Precondition@ specifies whether the
@@ -1232,7 +1268,7 @@ doc ///
 
 undocumented {
     numericalEval,
-    (numericalEval, List, List, Boolean)
+    (numericalEval, Matrix, List, Boolean)
 }
 
 
@@ -1254,7 +1290,7 @@ J = monomialCurveIdeal(QQ[a_0..a_3], {1,2,3})
 assert(all(1..5, d -> (numericalHilbertFunction(F,ideal 0_R,d)).hilbertFunctionValue == numcols super basis(d,J)))
 W = numericalImageDegree(F, ideal 0_R);
 assert(W.degree == 3)
-assert(isOnImage(W, numericalImageSample(F,ideal 0_R)) == true)
+assert(isOnImage(W, first numericalImageSample(F,ideal 0_R)) == true)
 assert(isOnImage(W, point random(CC^1,CC^(numcols F))) == false)
 ///
 
@@ -1304,6 +1340,10 @@ setRandomSeed 0
 (d, n) = (2, 2)
 R = CC[x_0..x_n]
 F = basis(d, R)
+PW = numericalImageDegree(F, ideal 0_R)
+assert(PW.degree == 4)
+assert((numericalImageDegree(PW.map, PW.sourceEquations, PW.witnessPointPairs_{1}, PW.imageSlice)).degree == 4)
+assert((numericalImageDegree(PW.map, PW.sourceEquations, PW.witnessPointPairs_{0,2}, PW.imageSlice)).degree == 4)
 I2 = ideal extractImageEquations(F, ideal 0_R, 2)
 S = QQ[y_0..y_(binomial(d+n,d)-1)]
 RQ = QQ[x_0..x_n]
@@ -1327,7 +1367,7 @@ R = CC[x_(1,1)..x_(n,n)]
 A = genericMatrix(R,n,n)
 I = ideal(A*transpose A - id_(R^n)) + ideal(det A - 1);
 p = point{flatten entries id_(CC^n)}
-F = gens R
+F = vars R
 assert(numericalImageDim(F,I,p) === n*(n-1)//2)
 assert((numericalImageDegree(F,I,p, repeats=>2, traceThreshold => 1e-3, Threshold => 2)).degree == 2^(n-1)*det matrix apply(toList(1..floor(n/2)), i -> apply(toList(1..floor(n/2)), j -> binomial(2*n - 2*i - 2*j, n - 2*i))))
 ///
