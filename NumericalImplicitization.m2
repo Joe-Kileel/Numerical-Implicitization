@@ -1,7 +1,7 @@
 newPackage("NumericalImplicitization",
-    Headline => "NumericalImplicitization",
-    Version => "1.0.9",
-    Date => "January 15, 2019",
+    Headline => "a package for computing numerical invariants of images of varieties",
+    Version => "1.1.0",
+    Date => "January 16, 2019",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen646@math.gatech.edu",
