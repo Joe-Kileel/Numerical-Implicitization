@@ -43,6 +43,7 @@ newPackage("NumericalImplicitization",
 	"MaxThreads",
 	"Repeats",
         "TraceThreshold",
+        -- "Endgame",
 	"PseudoWitnessSet",
         "isCompletePseudoWitnessSet",
         "sourceEquations",
@@ -51,7 +52,6 @@ newPackage("NumericalImplicitization",
         "imageSlice",
         "witnessPointPairs",
 	"isOnImage"
-        
     }
 
 -- software options: default is M2engine throughout
@@ -92,27 +92,38 @@ checkRings (Matrix, Ideal, List) := Sequence => opts -> (F, I, pts) -> (
 
 numericalSourceSample = method(Options => {Software => M2engine})
 numericalSourceSample (Ideal, Thing, ZZ) := List => opts -> (I, W, sampleSize) -> (
-    if I == 0 then ( k := coefficientRing ring I; return (entries random(k^(sampleSize), k^(#gens ring I)))/(p -> {p})/point; );
-    if not I.cache.?WitnessSet then I.cache.WitnessSet = if instance(W, WitnessSet) then W else first components(numericalIrreducibleDecomposition(I, Software => opts.Software));
-    samplePoints := apply(sampleSize, i -> sample I.cache.WitnessSet);
-    if precision ring I <= precision ring samplePoints#0#Coordinates#0 then samplePoints else refine(polySystem(I_*), samplePoints, Bits => precision ring I)
+    R := ring I;
+    if I == 0 then ( k := coefficientRing R; return (entries random(k^(sampleSize), k^(#gens R)))/(p -> {p})/point; );
+    samplePoints := if instance(W, Point) and not I.cache.?WitnessSet then (
+    	d := first numericalDimensions(vars R, I, W);
+    	squaredUpSource := randomSlice(gens I, #gens R - d, {});
+	startSys := squaredUpSource | randomSlice(vars R, d, {W, "source"});
+    	flatten apply(sampleSize, i -> track(startSys, squaredUpSource | randomSlice(vars R, d, {}), {W}, opts))
+    ) else (
+	if not I.cache.?WitnessSet then I.cache.WitnessSet = if instance(W, WitnessSet) then W else first components(numericalIrreducibleDecomposition(I, opts));
+	apply(sampleSize, i -> sample I.cache.WitnessSet)
+    );
+    if precision R <= precision ring samplePoints#0#Coordinates#0 then samplePoints else refine(polySystem(I_*), samplePoints, Bits => precision R)
 )
 numericalSourceSample (Ideal, WitnessSet) := List => opts -> (I, W) -> numericalSourceSample(I, W, 1, opts)
+numericalSourceSample (Ideal, Point) := List => opts -> (I, p) -> numericalSourceSample(I, p, 1, opts)
 numericalSourceSample (Ideal, ZZ) := List => opts -> (I, sampleSize) -> numericalSourceSample(I, null, sampleSize)
 numericalSourceSample Ideal := List => opts -> I -> numericalSourceSample(I, 1, opts)
 
     
 numericalImageSample = method(Options => options numericalSourceSample)
-numericalImageSample (Matrix, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> (
-    local pts;
-    (F, I, pts) = checkRings(F, I, {});
-    numericalEval(F, numericalSourceSample(I, sampleSize, opts), false) /point
+numericalImageSample (Matrix, Ideal, List, ZZ) := List => opts -> (F, I, pts, sampleSize) -> (
+    samplePoints := if #pts > 0 then numericalSourceSample(I, pts#0, sampleSize-#pts, opts) else numericalSourceSample(I, sampleSize, opts);
+    numericalEval(F, samplePoints, false) /point
 )
-numericalImageSample (Matrix, Ideal) := List => opts -> (F, I) -> numericalImageSample(F, I, 1, opts)
-numericalImageSample (List, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> numericalImageSample(matrix{F}, I, sampleSize, opts)
-numericalImageSample (List, Ideal) := List => opts -> (F, I) -> numericalImageSample(matrix{F}, I, opts)
-numericalImageSample (RingMap, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> numericalImageSample(F.matrix, I, sampleSize, opts)
-numericalImageSample (RingMap, Ideal) := List => opts -> (F, I) -> numericalImageSample(F.matrix, I, opts)
+numericalImageSample (Matrix, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> numericalImageSample(F, I, {}, sampleSize, opts)
+numericalImageSample (Matrix, Ideal) := List => opts -> (F, I) -> numericalImageSample(F, I, {}, 1, opts)
+numericalImageSample (List, Ideal, List, ZZ) := List => opts -> (F, I, pts, sampleSize) -> numericalImageSample(matrix{F}, I, pts, sampleSize, opts)
+numericalImageSample (List, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> numericalImageSample(matrix{F}, I, {}, sampleSize, opts)
+numericalImageSample (List, Ideal) := List => opts -> (F, I) -> numericalImageSample(matrix{F}, I, {}, 1, opts)
+numericalImageSample (RingMap, Ideal, List, ZZ) := List => opts -> (F, I, pts, sampleSize) -> numericalImageSample(F.matrix, I, pts, sampleSize, opts)
+numericalImageSample (RingMap, Ideal, ZZ) := List => opts -> (F, I, sampleSize) -> numericalImageSample(F.matrix, I, {}, sampleSize, opts)
+numericalImageSample (RingMap, Ideal) := List => opts -> (F, I) -> numericalImageSample(F.matrix, I, {}, 1, opts)
 
 
 numericalEval = method()
@@ -188,7 +199,7 @@ numericalHilbertFunction (Matrix, Ideal, List, ZZ) := NumericalInterpolationTabl
     N := numcols allMonomials;
     if #sampleImagePoints < N then (
         if opts.Verbose then print "Sampling image points ...";
-    	T := timing sampleImagePoints = sampleImagePoints | numericalImageSample(F, I, N - #sampleImagePoints, Software => opts.Software);
+    	T := timing sampleImagePoints = sampleImagePoints | numericalImageSample(F, I, sampleImagePoints, N, Software => opts.Software);
 	if opts.Verbose then print("     -- used " | toString(T#0) | " seconds");
     );
     sampleImagePoints = apply(sampleImagePoints/matrix, p -> 1/norm(2,p)*p);
@@ -255,8 +266,9 @@ pseudoWitnessSet = method(Options => {
     symbol Repeats => 3,
     symbol TraceThreshold => 1e-5,
     symbol Threshold => 5,
+    -- symbol Endgame => false,
     Verbose => true})
-pseudoWitnessSet (Matrix, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F, I, pointPairs, sliceData) -> ( --outputs a pseudo-witness set for F(V(I))
+pseudoWitnessSet (Matrix, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F, I, pointPairs, sliceMatrix) -> ( --outputs a pseudo-witness set for F(V(I))
     local imagePointString, local pairTable, local startSystem;
     y := getSymbol "y";
     k := coefficientRing ring I;
@@ -266,23 +278,30 @@ pseudoWitnessSet (Matrix, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F,
     dims := numericalDimensions(F, I, sourcePoint);
     numAttempts := 0;
     traceResult := opts.TraceThreshold + 1;
+    (fiberSlice, fiberdim) := ({}, first dims - last dims);
     while not traceResult < opts.TraceThreshold and numAttempts < opts.MaxAttempts do (
-        if sliceData === null then (
-            --if numAttempts > 0 then sourcePoint = first numericalSourceSample I;
-	    if numAttempts > 0 then sourcePoint = pointPairs#-1#0;
-	    pullbackSliceData := randomSlice(F, last dims, {sourcePoint, "source"});
-	    pullbackSlice := last pullbackSliceData;
-	    sliceCoefficients := sub(first pullbackSliceData, targetRing);
-        ) else if numAttempts == 0 then (
-            pullbackSlice = flatten entries sub(sliceData, F);
-            sliceCoefficients = sub(fold(flatten entries sliceData /coefficients/last, L -> L#0 | L#1), targetRing);
-            if not all(pointPairs, pair -> clean((10.0)^(-opts.Threshold), (matrix last pair | matrix{{1_k}}) * sub(sliceCoefficients, k)) == 0) then error "Expected input points to lie on input slice";
+        if numAttempts > 0 then sourcePoint = first numericalSourceSample(I, sourcePoint, Software => opts.Software);
+        pullbackSlice := if sliceMatrix === null then randomSlice(F, last dims, {sourcePoint, "source"}) else if numAttempts == 0 then (
+            if not all(pointPairs, pair -> clean((10.0)^(-opts.Threshold), sub(sliceMatrix, matrix pair#0)) == 0) then error "Expected input points to lie on input slice";
+            flatten entries sliceMatrix
         );
-        fiberSlice := if first dims > last dims then last randomSlice(vars ring I, first dims - last dims, {sourcePoint, "source"}) else {};
-	squaredUpSource := if I == 0 then {} else last randomSlice(gens I, #gens ring I - first dims, {});
+        squaredUpSource := if I == 0 then {} else randomSlice(gens I, #gens ring I - first dims, {});
+        if fiberdim > 0 then (
+	    fiberSlice = randomSlice(vars ring I, fiberdim, {sourcePoint, "source"});
+            if numAttempts == 0 and #pointPairs > 1 then pointPairs = numericalEval(F, {sourcePoint} | flatten apply(toList(1..#pointPairs-1), i -> (
+		codimSlice := randomSlice(F - sub(matrix pointPairs#i#1, ring F), first dims - fiberdim, {});
+		localFiberSlice := codimSlice | squaredUpSource | randomSlice(vars ring I, fiberdim, {pointPairs#i#0, "source"});
+		globalFiberSlice := codimSlice | squaredUpSource | fiberSlice;
+		myTrack(localFiberSlice, globalFiberSlice, {pointPairs#i#0})
+	    )), true);
+        );
 	newStartSystem := squaredUpSource | fiberSlice | pullbackSlice;
         newPairs := if numAttempts > 0 then numericalEval(F, myTrack(startSystem, newStartSystem, (values pairTable)/first, opts), true) else pointPairs/(pair -> (pair#0, matrix pair#1));
-	if #newPairs == 0 then ( numAttempts = numAttempts + 1; continue; );
+	if #newPairs == 0 then (
+            if opts.Verbose then print "Failed to track old points to new slice. Retrying...";
+            numAttempts = numAttempts + 1;
+            continue;
+        );
         pairTable = new MutableHashTable;
         for pair in newPairs do (
             imagePointString = toString round(opts.Threshold, last pair);
@@ -312,17 +331,13 @@ pseudoWitnessSet (Matrix, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F,
         symbol degree => #pointPairs,
         symbol map => F,
         symbol sourceEquations => I,
-        symbol sourceSlice => transpose matrix{fiberSlice},
-        symbol generalCombinations => transpose matrix{squaredUpSource},
-        symbol imageSlice => ((vars targetRing) | matrix{{1_targetRing}})*sliceCoefficients,
+        symbol generalCombinations => matrix{squaredUpSource},
+        symbol sourceSlice => matrix{fiberSlice},
+        symbol imageSlice => matrix{pullbackSlice},
         symbol witnessPointPairs => VerticalList apply(pointPairs, pair -> (pair#0, point pair#1)),
 	symbol trace => traceResult
     }
 )
---pseudoWitnessSet(Matrix, Ideal, Point, Thing) := PseudoWitnessSet => opts -> (F, I, p, L) -> (
-    --(F, I, p) = checkRings(F, I, {p});
-    --pseudoWitnessSet(F, I, numericalEval(F, p, true), L, opts)
---)
 pseudoWitnessSet(Matrix, Ideal, Point) := PseudoWitnessSet => opts -> (F, I, p) -> (
     (F, I, p) = checkRings(F, I, {p});
     pseudoWitnessSet(F, I, numericalEval(F, p, true), null, opts)
@@ -332,11 +347,9 @@ pseudoWitnessSet (Matrix, Ideal) := PseudoWitnessSet => opts -> (F, I) -> (
     pseudoWitnessSet(F, I, first numericalSourceSample I, opts)
 )
 pseudoWitnessSet(List, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F, I, pointPairs, L) -> pseudoWitnessSet(matrix{F}, I, pointPairs, L, opts)
---pseudoWitnessSet(List, Ideal, Point, Thing) := PseudoWitnessSet => opts -> (F, I, p, L) -> pseudoWitnessSet(matrix{F}, I, p, L, opts)
 pseudoWitnessSet(List, Ideal, Point) := PseudoWitnessSet => opts -> (F, I, p) -> pseudoWitnessSet(matrix{F}, I, p, opts)
 pseudoWitnessSet (List, Ideal) := PseudoWitnessSet => opts -> (F, I) -> pseudoWitnessSet(matrix{F}, I, opts)
 pseudoWitnessSet(RingMap, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F, I, pointPairs, L) -> pseudoWitnessSet(F.matrix, I, pointPairs, L, opts)
---pseudoWitnessSet(RingMap, Ideal, Point, Thing) := PseudoWitnessSet => opts -> (F, I, p, L) -> pseudoWitnessSet(F.matrix, I, p, L, opts)
 pseudoWitnessSet(RingMap, Ideal, Point) := PseudoWitnessSet => opts -> (F, I, p) -> pseudoWitnessSet(F.matrix, I, p, opts)
 pseudoWitnessSet (RingMap, Ideal) := PseudoWitnessSet => opts -> (F, I) -> pseudoWitnessSet(F.matrix, I, opts)
 
@@ -350,9 +363,8 @@ numericalImageDegree (RingMap, Ideal) := ZZ => opts -> (F, I) -> (pseudoWitnessS
 
 myTrack = method(Options => options pseudoWitnessSet)
 myTrack (List, List, List) := List => opts -> (startSystem, targetSystem, startSolutions) -> (
-    randomGamma := random coefficientRing ring startSystem#0;
-    startSystem = polySystem startSystem;
-    targetSystem = polySystem targetSystem;
+    k := coefficientRing ring startSystem#0;
+    randomGamma := random k;
     if #startSolutions > max(20, 2*opts.MaxThreads) and opts.MaxThreads > 1 then ( -- prints many errors, but continues to run
         --setIOExclusive(); -- buggy: causes isReady to indefinitely hang
 	startSolutionsList := pack(ceiling(#startSolutions/opts.MaxThreads), startSolutions);
@@ -370,29 +382,33 @@ myTrack (List, List, List) := List => opts -> (startSystem, targetSystem, startS
     );
     goodSols := select(targetSolutions, p -> p#?SolutionStatus and p#SolutionStatus == Regular);
     if opts.Verbose and #goodSols < #startSolutions then print("Paths going to infinity: " | #startSolutions - #goodSols | " out of " | #startSolutions);
+    if opts.DoRefinements then goodSols = apply(refine(polySystem targetSystem, goodSols, Bits => precision k), p -> point sub(matrix p, k));
     goodSols
 )
 
 
 randomSlice = method() -- returns a list of c random linear combinations of polys (row matrix) passing through (optional source or target) point, via translation
-randomSlice (Matrix, ZZ, List) := Sequence => (polys, c, P) -> (
+randomSlice (Matrix, ZZ, List) := List => (polys, c, pointData) -> (
     R := ring polys;
     coeffs := random(R^(numcols polys), R^c);
     G := polys*coeffs;
-    if #P == 0 then return (coeffs, flatten entries G);
-    translate := if P#1 == "source" then sub(G, matrix P#0) else (matrix P#0)*coeffs;
-    (coeffs || (-1)*translate, flatten entries(G - translate))
+    flatten entries(G - if #pointData == 0 then 0 else sub(if pointData#1 == "source" then sub(G, matrix pointData#0) else (matrix pointData#0)*coeffs, R))
 )
 
 
 monodromyLoop = method(Options => options pseudoWitnessSet)
 monodromyLoop (Matrix, ZZ, List, MutableHashTable) := List => opts -> (F, imageDim, startSystem, pairTable) -> (
     numRepetitiveMonodromyLoops := 0;
+    numPts := {#values pairTable};
     if opts.Verbose then print "Tracking monodromy loops ...";
     while numRepetitiveMonodromyLoops < opts.Repeats do (
-        previousNumImagePoints := #values pairTable;
-	intermediateSystem1 := drop(startSystem, -imageDim) | last randomSlice(F | matrix{{10_(ring F)}}, imageDim, {});
-        intermediateSolutions1 := myTrack(startSystem, intermediateSystem1, (values pairTable)/first, opts);
+	intermediateSystem1 := drop(startSystem, -imageDim) | randomSlice(F | matrix{{10_(ring F)}}, imageDim, {});
+        startSols := (values pairTable)/first;
+        -- increment := if opts.Endgame and #startSols > 100 and #numPts > 5 and all((firstDifference firstDifference numPts)_{-3..-1}, d -> d < 0) then (
+            -- startSols = startSols_(randomInts(#startSols, max(100, #startSols//10)));
+            -- 1/4
+        -- ) else 1;
+        intermediateSolutions1 := myTrack(startSystem, intermediateSystem1, startSols, opts);
         if #intermediateSolutions1 > 0 then (
             endSolutions := myTrack(intermediateSystem1, startSystem, intermediateSolutions1, opts);
             if #endSolutions > 0 then (
@@ -403,10 +419,11 @@ monodromyLoop (Matrix, ZZ, List, MutableHashTable) := List => opts -> (F, imageD
                 );
             );
         );
-        if previousNumImagePoints < #values pairTable then numRepetitiveMonodromyLoops = 0
+        if numPts#-1 < #values pairTable then numRepetitiveMonodromyLoops = 0
         else numRepetitiveMonodromyLoops = numRepetitiveMonodromyLoops + 1;
-        if opts.Verbose then print ("Points found: " | #values pairTable);
-        if #values pairTable > opts.MaxPoints then break;
+        numPts = append(numPts, #values pairTable);
+        if opts.Verbose then print ("Points found: " | numPts#-1);
+        if numPts#-1 >= opts.MaxPoints then break;
     );
     values pairTable
 )
@@ -417,8 +434,8 @@ traceTest (Matrix, ZZ, List, List) := RR => opts -> (F, imageDim, intersectionPo
     C := coefficientRing ring F;
     startUpstairsPoints := intersectionPointPairs/first;
     startDownstairsPoints := intersectionPointPairs/last;
-    for translationMagnitude in {1,2,3,4,5,-1,6,-2} do (
-        randomTranslation := 10^(4-translationMagnitude)*flatten entries(map(C^1, C^(#startSystem - imageDim), 0) | random(C^1, C^imageDim));
+    for translationMagnitude in {0,1,3,2,-1,5,-2,6} do (
+        randomTranslation := 10^(translationMagnitude)*flatten entries(map(C^1, C^(#startSystem - imageDim), 0) | random(C^1, C^imageDim));
         gammas := {random C, random C};
         firstStepSystem := startSystem + (first gammas)*randomTranslation;
         secondStepSystem := startSystem + (last gammas)*randomTranslation;
@@ -449,11 +466,10 @@ isOnImage (PseudoWitnessSet, Point) := Boolean => opts -> (W, q) -> (
     I := W.sourceEquations;
     if not ring q === coefficientRing ring I then error "Point must have coordinates in the coefficient ring of the ideal.";
     fiberSlice := flatten entries W.sourceSlice;
-    targetVariables := gens ring(W.imageSlice);
-    pullbackSlice := flatten entries sub(W.imageSlice, F);
+    pullbackSlice := flatten entries W.imageSlice;
     squaredUpSource := flatten entries W.generalCombinations;
     startUpstairsPoints := W.witnessPointPairs /first;
-    newPullbackSlice := last randomSlice(F, #pullbackSlice, {q, "target"});
+    newPullbackSlice := randomSlice(F, #pullbackSlice, {q, "target"});
     targetUpstairsPoints := myTrack(squaredUpSource | fiberSlice | pullbackSlice, squaredUpSource | fiberSlice | newPullbackSlice, startUpstairsPoints, opts);
     imagePointTable := hashTable apply(numericalEval(F, targetUpstairsPoints, false), p -> round(opts.Threshold, p) => 0);
     imagePointTable#?(round(opts.Threshold, q))
@@ -544,15 +560,15 @@ isWellDefined PseudoWitnessSet := Boolean => W -> (
     -- CHECK KEYS
     K := keys W;
     expectedKeys := set {
-        symbol isCompletePseudoWitnessSet, 
-        symbol degree, 
-        symbol map, 
-        symbol sourceEquations, 
-        symbol sourceSlice, 
+        symbol isCompletePseudoWitnessSet,
+        symbol degree,
+        symbol map,
+        symbol sourceEquations,
+        symbol sourceSlice,
         symbol generalCombinations,
-        symbol imageSlice, 
-        symbol witnessPointPairs, 
-        -- symbol witnessSet, 
+        symbol imageSlice,
+        symbol witnessPointPairs,
+        -- symbol witnessSet,
         symbol trace
     };
     if set K =!= expectedKeys then (
@@ -619,7 +635,7 @@ isWellDefined PseudoWitnessSet := Boolean => W -> (
         if debugLevel > 0 then << "-- expected ground field to have floating point arithmetic" << endl;
         return false
     );
-    if not all(W.witnessPointPairs, pair -> #(pair#0#Coordinates) === #gens R and #(pair#1#Coordinates) === #gens ring W.imageSlice) then (
+    if not all(W.witnessPointPairs, pair -> #(pair#0#Coordinates) === #gens R and #(pair#1#Coordinates) === numcols W.map) then (
         if debugLevel > 0 then << "-- number of coordinates in `witnessPointPairs' do not match" << endl;
         return false
     );
@@ -631,11 +647,22 @@ isWellDefined PseudoWitnessSet := Boolean => W -> (
 	if debugLevel > 0 then << " -- expected components `witnessPointPairs' to correspond under `map'" << endl;
 	return false
     );
-    if not all(W.witnessPointPairs/last/matrix, q -> clean(1e-10, sub(W.imageSlice, q)) == 0) then (
+    if not all(W.witnessPointPairs/first/matrix, p -> clean(1e-10, sub(W.imageSlice, p)) == 0) then (
 	if debugLevel > 0 then << " -- expected second components of `witnessPointPairs' to lie on `imageSlice'" << endl;
 	return false
     );
     true
+)
+
+
+firstDifference = method()
+firstDifference List := List => L -> drop(L, 1) - drop(L, -1)
+
+
+randomInts = method()
+randomInts (ZZ, ZZ) := List => (n, s) -> (
+     L := toList(0..<n);
+     apply(s, i -> ( a := L#(random(#L)); L = L - set{a}; a ))
 )
 
 
@@ -691,25 +718,34 @@ doc ///
     	numericalSourceSample
 	(numericalSourceSample, Ideal, Thing, ZZ)
         (numericalSourceSample, Ideal, WitnessSet)
+        (numericalSourceSample, Ideal, Point)
 	(numericalSourceSample, Ideal, ZZ)
         (numericalSourceSample, Ideal)
     Headline
     	samples a general point on a variety
     Usage
+        numericalSourceSample(I, W, s)
+        numericalSourceSample(I, p, s)
+        numericalSourceSample(I, W)
+        numericalSourceSample(I, p)
     	numericalSourceSample(I, s)
 	numericalSourceSample(I)
     Inputs
 	I:Ideal
 	    which is prime, specifying a variety $V(I)$
-	s:ZZ
+	W:WitnessSet
+            a witness set for $V(I)$
+        p:Point
+            a point on $V(I)$
+        s:ZZ
 	    the number of points to sample on $V(I)$
     Outputs
     	:List
 	    of sample points on $V(I)$
     Consequences
         Item
-            If $I$ is not the zero ideal, then a numerical irreducible decomposition of $I$ is performed,
-            and cached under {\tt I.cache.WitnessSet}.
+            If $I$ is not the zero ideal, and an initlal point $p$ is not specified, then a numerical
+            irreducible decomposition of $I$ is performed, and cached under {\tt I.cache.WitnessSet}.
     Description
 	Text
 	    This method computes a list of sample points on a variety numerically. If $I$ is the 
@@ -718,7 +754,12 @@ doc ///
             @TO2{numericalIrreducibleDecomposition, "numerical irreducible decomposition"}@ 
             of $I$ is computed, which is then used to sample points.
 
-	    If the number of points $s$ is unspecified, then it is assumed that $s = 1$. 
+	    If the number of points $s$ is unspecified, then it is assumed that $s = 1$.
+            
+            One can provide a witness set for $V(I)$ if a witness set is already known. 
+            Alternatively, one can provide an initial point $p$ on $V(I)$, which is then used to 
+            generate additional points on $V(I)$. This can be much quicker than performing
+            a numerical irreducible decomposition.
 
 	    In the example below, we sample a point from $A^3$ and then $3$ points from
 	    $V(x^2 + y^2 + z^2 - 1)$ in $A^3$.
@@ -729,6 +770,20 @@ doc ///
             samp#0
             I = ideal(x^2 + y^2 + z^2 - 1);
             numericalSourceSample(I, 3)
+        Text
+            
+            In the following example, we sample a point from SO(5), by starting with the 
+            identity matrix as an initial point:
+            
+        Example
+            n = 5
+            R = RR[a_(1,1)..a_(n,n)]
+            A = genericMatrix(R,n,n);
+            I = ideal(A*transpose A - id_(R^n));
+            p = point id_(RR^n)
+            time q = first numericalSourceSample(I, p)
+            O = matrix pack(n, q#Coordinates/realPart)
+            clean(1e-10, O*transpose O - id_(RR^n)) == 0
     Caveat
 	Since numerical irreducible decompositions are done over CC, if $I$ is not the zero 
 	ideal, then the output will be a point in complex space 
@@ -740,16 +795,20 @@ doc ///
 doc ///
     Key
     	numericalImageSample
+        (numericalImageSample, Matrix, Ideal, List, ZZ)
 	(numericalImageSample, Matrix, Ideal, ZZ)
 	(numericalImageSample, Matrix, Ideal)
+        (numericalImageSample, List, Ideal, List, ZZ)
         (numericalImageSample, List, Ideal, ZZ)
 	(numericalImageSample, List, Ideal)
+        (numericalImageSample, RingMap, Ideal, List, ZZ)
         (numericalImageSample, RingMap, Ideal, ZZ)
 	(numericalImageSample, RingMap, Ideal)
     Headline
     	samples general points on the image of a variety
     Usage
-    	numericalImageSample(F, I, s)
+    	numericalImageSample(F, I, P, s)
+        numericalImageSample(F, I, s)
 	numericalImageSample(F, I)
     Inputs
     	F:
@@ -757,7 +816,9 @@ doc ///
 	    @TO2{RingMap, "ring map"}@, specifying a map
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
-	s:ZZ
+	P:List
+            of points on $F(V(I))$
+        s:ZZ
 	    the number of points to sample in $F(V(I))$
     Outputs
     	:List
@@ -768,6 +829,9 @@ doc ///
             numerically, by calling @TO numericalSourceSample@.
 
 	    If the number of points $s$ is unspecified, then it is assumed that $s = 1$.
+            
+            One can optionally provide an initial list of points $P$ on $F(V(I))$, which 
+            will then be completed to a list of $s$ points on $F(V(I))$.
 
 	    The following example samples a point from the twisted cubic. We then 
             independently verify that this point does lie on the twisted cubic.
@@ -1181,8 +1245,8 @@ doc ///
 	    a general point on $V(I)$
 	P:List
 	    of pairs $(p, q)$ with $p$ a general point on $V(I)$,
-	    and $q = F(p)$. If an optional input slice is provided,
-	    then $q$ should additionally lie on $L$.
+	    and $q = F(p)$. In this case an input slice $L$ must also be 
+            provided, and $q$ should additionally lie on $L$.
 	L:Matrix
 	    representing a linear slice of $F(V(I))$. The format
 	    should be a row matrix, whose entries are linear forms
@@ -1207,7 +1271,7 @@ doc ///
 	    $q = F(p)$, and $q$ is in $L$, must be provided (to have an initial "seed" to 
 	    the monodromy - even if it only consists of a single such pair). 
 	    The method then applies monodromy to try to compute the entire intersection 
-	    $F(V(I)) \cap L$. If no linear slice is given, then a random 
+	    $F(V(I))\cap L$. If no linear slice is given, then a random 
 	    complementary-dimensional linear slice will be chosen, in which case no 
 	    seed is needed, as an initial point pair will be chosen to lie on the slice.
 
@@ -1303,8 +1367,9 @@ doc ///
 	    is @TO infinity@.
             
             The option {\tt DoRefinements} specifies whether or not to refine solution points found 
-            via monodromy. Refinement of points can improve their accuracy, and if specified,
-	    runs before each trace test attempt. The default value is @TO true@.
+            via monodromy. Refinement of points may improve their accuracy. If the value of this
+            option is true, then refinement occurs after every tracking (which may increase the time 
+            for computation). The default value is @TO false@.
 	    
 	    The option {\tt DoTraceTest} specifies whether or not to run the trace test. This is
 	    useful when the user specifies a special linear slice $L$ (as in the discussion on
@@ -1313,8 +1378,7 @@ doc ///
     	    The option {\tt TraceThreshold} sets the threshold for a pseudo-witness set to pass 
             the trace test. The trace for a complete exact pseudo-witness set is 
             $0$; large nonzero values indicate failure (the larger the value, the worse 
-            the failure). The default value is $1e-5$. Caution: setting the value of this 
-            threshold too high may result in the trace test returning false positives.
+            the failure). The default value is $1e-5$.
 
     	    The option {\tt Threshold} sets the threshold for determing point equality. 
             If this option has value $n$, then two points are considered equal iff their 
@@ -1341,7 +1405,7 @@ doc ///
 	Text
             This is a type of hash table storing the output of a 
             pseudo-witness set computation using monodromy, 
-            with the following keys:
+            with the following keys:
         Code
             UL {
                 {TEX "\\bf isCompletePseudoWitnessSet: whether the pseudo-witness set has passed the trace test, according to the trace test threshold"},
@@ -1350,7 +1414,7 @@ doc ///
                 TEX "\\bf sourceEquations: the defining ideal $I$ of the source variety",
                 {TEX "\\bf sourceSlice: additional equations to form a zero-dimensional system (only needed if the map is not finite-to-one)"},
                 {TEX "\\bf generalCombinations: additional equations to form a zero-dimensional system (only needed if the source ideal is not a complete intersection)"},
-                TEX "\\bf imageSlice: a general complementary-dimensional linear space to $F(V(I))$",
+                TEX "\\bf imageSlice: the pullback under F of a general complementary-dimensional linear space to $F(V(I))$",
                 {TEX "\\bf witnessPointPairs: a vertical list of 2-point sequences $(p, F(p))$, where $p$ lies on $V(I)$ and $F(p)$ lies on imageSlice"},
                 TEX "\\bf trace: the result of the trace test applied to witnessPointPairs"
                 }
@@ -1501,7 +1565,7 @@ doc ///
     	    This option sets the maximum number of processor threads that will be used 
             for parallel computation. This distributes the paths to track in each 
             monodromy loop among the processors as evenly as possible. 
-            The value of this option should never exceed the value of the variable 
+            The value of this option should not exceed the value of the variable 
             {\tt allowableThreads}. The default value is $1$.
     Caveat
         Parallel computation in $Macaulay2$ is under development. Unexpected errors 
@@ -1593,6 +1657,7 @@ T = numericalHilbertFunction(F, I, 3);
 M = extractImageEquations(T, AttemptExact => true)
 assert(image M == image (map(ring M, S, gens ring M))(I3))
 elapsedTime PW = pseudoWitnessSet(F,I)
+assert(PW.degree == 4)
 ///
 
 TEST /// -- Grassmannian Gr(3, 5) = G(2,4)
@@ -1631,8 +1696,8 @@ R = CC[x_0..x_n]
 F = basis(d, R)
 PW = pseudoWitnessSet(F, ideal 0_R)
 assert(PW.degree == 4)
-assert(numericalImageDegree pseudoWitnessSet(PW.map, PW.sourceEquations, PW.witnessPointPairs_{1}, PW.imageSlice) == 4)
-assert(numericalImageDegree pseudoWitnessSet(PW.map, PW.sourceEquations, PW.witnessPointPairs_{0,2}, PW.imageSlice) == 4)
+assert((pseudoWitnessSet(PW.map, PW.sourceEquations, PW.witnessPointPairs_{1}, PW.imageSlice)).degree == 4)
+assert((pseudoWitnessSet(PW.map, PW.sourceEquations, PW.witnessPointPairs_{0,2}, PW.imageSlice)).degree == 4)
 I2 = ideal extractImageEquations(F, ideal 0_R, 2, AttemptExact => true)
 S = QQ[y_0..y_(binomial(d+n,d)-1)]
 RQ = QQ[x_0..x_n]
@@ -1662,11 +1727,12 @@ p1 = first numericalSourceSample(I)
 assert(clean(eps, sub(gens I, matrix p1)) == 0)
 p2 = first numericalSourceSample(I, W)
 assert(clean(eps, sub(gens I, matrix p2)) == 0)
+p3 = first numericalSourceSample(I, p1)
+assert(clean(eps, sub(gens I, matrix p3)) == 0)
 P = numericalSourceSample(I, W, 10)
 assert(all(P/matrix, p -> clean(eps, sub(gens I, p)) == 0))
 q1 = numericalImageSample(F, I)
-Q = numericalImageSample(F, I, 10)
-S = numericalImageSample(F,I,55)
+S = numericalImageSample(F,I,55);
 T = numericalHilbertFunction(F,I,S,2)
 assert(T.hilbertFunctionValue == 42)
 assert(isWellDefined T)
@@ -1674,23 +1740,23 @@ PW = pseudoWitnessSet(F, I, p1)
 assert(isWellDefined PW)
 assert(PW.degree == 6)
 assert(numericalImageDegree(F, I) == 6)
-assert(numericalImageDegree pseudoWitnessSet(F, I, {PW.witnessPointPairs#0}, PW.imageSlice) == 6)
-assert(numericalImageDegree pseudoWitnessSet(F, I, PW.witnessPointPairs, PW.imageSlice) == 6)
+assert((pseudoWitnessSet(F, I, {PW.witnessPointPairs#0}, PW.imageSlice)).degree == 6)
+assert((pseudoWitnessSet(F, I, PW.witnessPointPairs, PW.imageSlice)).degree == 6)
 ///
 
-TEST /// -- SO(n)
+TEST /// -- O(n)
 setRandomSeed 0
 n = 4
---R = CC_100[x_(1,1)..x_(n,n)]
-R = CC_100[x_0..x_(n^2-1)]
+R = CC[x_0..x_(n^2-1)]
 A = genericMatrix(R,n,n)
-I = ideal(A*transpose A - id_(R^n)) + ideal(det A - 1);
-p = point{flatten entries id_((coefficientRing R)^n)}
+I = ideal(A*transpose A - id_(R^n));
 F = vars R
+p = point id_((coefficientRing R)^n)
+q = first numericalSourceSample(I, p)
 assert(numericalImageDim(F,I,p) == binomial(n,2))
 degSOn = 2^(n-1)*det matrix table(floor(n/2), floor(n/2), (i,j) -> binomial(2*n - 2*i - 2*j - 4, n - 2*i - 2))
-PW = pseudoWitnessSet(F,I,p, Repeats=>1, Threshold=>3, TraceThreshold=>1e-4, DoRefinements=>true, MaxThreads=>allowableThreads)
-assert(PW.degree == degSOn)
+elapsedTime PW = pseudoWitnessSet(F,I,p, Repeats=>2, Threshold=>3, MaxThreads=>allowableThreads)
+assert(numericalImageDegree PW == degSOn)
 ///
 
 TEST /// -- Twisted cubic projections
@@ -1709,7 +1775,7 @@ S = ring nodalCubic
 assert(nodalCubic == ideal(S_1^3 - S_0*S_2^2))
 F3 = (gens R)_{0,1,2}
 assert((numericalHilbertFunction(F3, I, 2)).hilbertFunctionValue == 1)
-assert(numericalImageDegree pseudoWitnessSet(F2, I, p#0) == 3)
+assert((pseudoWitnessSet(F2, I, p#0)).degree == 3)
 ///
 
 TEST /// -- 3x3 matrices with double eigenvalue
@@ -1725,8 +1791,9 @@ I = ideal(A*transpose(A) - id_(R^3), det(A)-1)
 m = A*diagonalMatrix{lambda,lambda,mu}*transpose(A)
 F = {m_(0,0),m_(0,1),m_(0,2),m_(1,1),m_(1,2),m_(2,2)}
 p = first numericalSourceSample I
+p = point id_(CC^3)
 assert(numericalImageDim(F,I,p) == dim J)
-assert(numericalImageDegree pseudoWitnessSet(F,I,p,TraceThreshold=>1e-4) == degree J)
+assert((pseudoWitnessSet(F,I,p)).degree == degree J)
 ///
 
 TEST ///
@@ -1871,6 +1938,17 @@ time pseudoWitnessSet(F,I)
 
 F = (gens R)_(toList(0,1,2))
 I = ideal(x_1-x_3*x_4,x_2-x_3*x_5,x_4*x_5-1)
+
+-- SO(5)
+n = 5
+R = CC[x_0..x_(n^2-1)]
+A = genericMatrix(R,n,n)
+I = ideal(A*transpose A - id_(R^n));
+F = vars R
+p = point id_((coefficientRing R)^n)
+q = first numericalSourceSample(I, p)
+allowableThreads = 4
+elapsedTime PW = pseudoWitnessSet(F,I,p,Threshold=>3,MaxThreads=>allowableThreads, MaxPoints=>384, Endgame=>true) -- passed in 153.496 seconds
 
 -- Dim example
 jacI=(d,l,n)->(S=CC[x_(0,1)..x_(n,l),c_0..c_(binomial(l,n)-1)];R= S[X_0..X_n];
