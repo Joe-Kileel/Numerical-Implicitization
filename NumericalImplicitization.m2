@@ -1,7 +1,7 @@
 newPackage("NumericalImplicitization",
     Headline => "a package for computing numerical invariants of images of varieties",
-    Version => "1.1.2",
-    Date => "January 29, 2019",
+    Version => "1.2.0",
+    Date => "February 17, 2019",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen646@math.gatech.edu",
@@ -175,10 +175,12 @@ numericalNullity (List, Boolean) := List => opts -> (M, keepSVD) -> (
     if opts.Verbose then print("     -- used " | toString(T#0) | " seconds");
     largestGap := (#S, opts.SVDGap);
     for i from 1 to #S-1 do (
-        if S#i == 0 then (
-            if first largestGap == #S then largestGap = (i, "infinity");
-            break;
-        ) else if S#(i-1)/S#i > last largestGap then largestGap = (i, S#(i-1)/S#i);
+        if S#i == 0 then ( largestGap = (i, "infinity"); break; )
+        else if S#(i-1)/S#i > last largestGap then ( largestGap = (i, S#(i-1)/S#i); break; );
+        -- if S#i == 0 then (
+            -- if first largestGap == #S then largestGap = (i, "infinity");
+            -- break;
+        -- ) else if S#(i-1)/S#i > last largestGap then largestGap = (i, S#(i-1)/S#i);
     );
     if keepSVD then {numcols A - first largestGap, (S, U, Vt)} else numcols A - first largestGap
 )
@@ -281,8 +283,8 @@ pseudoWitnessSet (Matrix, Ideal, List, Thing) := PseudoWitnessSet => opts -> (F,
     (fiberSlice, fiberdim) := ({}, first dims - last dims);
     while not traceResult < opts.TraceThreshold and numAttempts < opts.MaxAttempts do (
         if numAttempts > 0 then sourcePoint = first numericalSourceSample(I, sourcePoint, Software => opts.Software);
-        pullbackSlice := if sliceMatrix === null then randomSlice(F, last dims, {sourcePoint, "source"}) else if numAttempts == 0 then (
-            if not all(pointPairs, pair -> clean((10.0)^(-opts.Threshold), sub(sliceMatrix, matrix pair#0)) == 0) then error "Expected input points to lie on input slice";
+        pullbackSlice := if sliceMatrix === null then randomSlice(F, last dims, {sourcePoint, "source"}) else (
+            if numAttempts == 0 and not all(pointPairs, pair -> clean((10.0)^(-opts.Threshold), sub(sliceMatrix, matrix pair#0)) == 0) then error "Expected input points to lie on input slice";
             flatten entries sliceMatrix
         );
         squaredUpSource := if I == 0 then {} else randomSlice(gens I, #gens ring I - first dims, {});
@@ -703,7 +705,7 @@ doc ///
 	    {\em NumericalImplicitization} builds on existing numerical algebraic geometry software: 
 	    @TO2{NumericalAlgebraicGeometry,"NAG4M2"}@, @TO Bertini@ and 
             @TO PHCpack@. The user may specify any of these to use for path tracking and 
-            point sampling; by default, the native engine NAG4M2 is used. Currently, all methods 
+            point sampling; by default, the native software NAG4M2 is used. Currently, all methods 
             are implemented for reduced and irreducible varieties.
     
 	    {\bf Reference:} 
@@ -736,12 +738,12 @@ doc ///
 	W:WitnessSet
             a witness set for $V(I)$
         p:Point
-            a point on $V(I)$
+            a point on the source $V(I)$
         s:ZZ
-	    the number of points to sample on $V(I)$
+	    the number of points to sample on the source $V(I)$
     Outputs
     	:List
-	    of sample points on $V(I)$
+	    of sample points on the source $V(I)$
     Consequences
         Item
             If $I$ is not the zero ideal, and an initlal point $p$ is not specified, then a numerical
@@ -757,8 +759,8 @@ doc ///
 	    If the number of points $s$ is unspecified, then it is assumed that $s = 1$.
             
             One can provide a witness set for $V(I)$ if a witness set is already known. 
-            Alternatively, one can provide an initial point $p$ on $V(I)$, which is then used to 
-            generate additional points on $V(I)$. This can be much quicker than performing
+            Alternatively, one can provide an initial point $p$ on the source $V(I)$, which is then used to 
+            generate additional points on the source $V(I)$. This can be much quicker than performing
             a numerical irreducible decomposition.
 
 	    In the example below, we sample a point from $A^3$ and then $3$ points from
@@ -772,7 +774,7 @@ doc ///
             numericalSourceSample(I, 3)
         Text
             
-            In the following example, we sample a point from SO(5), by starting with the 
+            In the following example, we sample a point from $SO(5)$, by starting with the 
             identity matrix as an initial point:
             
         Example
@@ -785,7 +787,7 @@ doc ///
             O = matrix pack(n, q#Coordinates/realPart)
             clean(1e-10, O*transpose O - id_(RR^n)) == 0
     Caveat
-	Since numerical irreducible decompositions are done over CC, if $I$ is not the zero 
+	Since numerical irreducible decompositions are done over @TO CC@, if $I$ is not the zero 
 	ideal, then the output will be a point in complex space 
 	(regardless of the ground field of the ring of $I$).
     SeeAlso
@@ -878,14 +880,14 @@ doc ///
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
 	p:Point
-	    a sample point on $V(I)$
+	    a sample point on the source $V(I)$
     Outputs
     	:ZZ
 	    the dimension of $F(V(I)))$
     Description
 	Text
 	    The method computes the dimension of the image of a variety numerically. 
-	    Even if the source variety and map are projective, the affine (= Krull) 
+	    Even if the source variety and map are projective, the affine (Krull) 
             dimension is returned. This ensures consistency with @TO dim@.
 
 	    The following example computes the affine dimension of the Grassmannian 
@@ -951,8 +953,8 @@ doc ///
 	    largest "significant" gap between two consecutive singular values, where 
             the gap between $\sigma_i$ and $\sigma_{i+1}$ is "significant" if the ratio 
 	    $\sigma_i / \sigma_{i+1}$ exceeds the value of {\tt SVDGap}.
-	    If the largest gap is greater than this threshold, then all singular values 
-            after the largest gap are considered as numerically zero; if all gaps are 
+	    If a gap is found which is greater than this threshold, then all singular values 
+            after this gap are considered as numerically zero; if all gaps are 
             less than this threshold, then the matrix is considered numerically full rank.
 	    The default value of {\tt SVDGap} is $1e5$.
             
@@ -1111,7 +1113,7 @@ doc ///
 	    This method finds (approximate) implicit degree $d$ equations for the image 
             of a variety, by @TO2{numericalHilbertFunction, "numerical interpolation"}@. 
             The option {\tt AttemptExact} specifies whether to use the @TO LLL@ algorithm
-            to compute "short" equations over $Z$. The default value is @TO false@.
+            to compute "short" equations over @TO ZZ@. The default value is @TO false@.
 
 	    If a numerical interpolation table has already been computed, then 
             to avoid repetitive calculation one may run this function with the interpolation 
@@ -1242,9 +1244,9 @@ doc ///
 	I:Ideal
 	    which is prime, specifying a source variety $V(I)$
 	p:Point
-	    a general point on $V(I)$
+	    a general point on the source $V(I)$
 	P:List
-	    of pairs $(p, q)$ with $p$ a general point on $V(I)$,
+	    of pairs $(p, q)$ with $p$ a general point on the source $V(I)$,
 	    and $q = F(p)$. In this case an input slice $L$ must also be 
             provided, and $q$ should additionally lie on $L$.
 	L:Matrix
@@ -1268,7 +1270,7 @@ doc ///
 	    
 	    The method also allows the user to provide a particular linear slice $L$ of the 
 	    image. In this case a list of point pairs $(p, q)$ such that $p$ is in $V(I)$,
-	    $q = F(p)$, and $q$ is in $L$, must be provided (to have an initial "seed" to 
+	    $q = F(p)$, and $q$ is in $L$, must be provided (to have an initial input point to 
 	    the monodromy - even if it only consists of a single such pair). 
 	    The method then applies monodromy to try to compute the entire intersection 
 	    $F(V(I))\cap L$. If no linear slice is given, then a random 
@@ -1363,7 +1365,7 @@ doc ///
 	    number of points is found following a monodromy loop, then the method gracefully 
 	    exits. The option is especially useful in the case that the user specifies a 
 	    linear slice $L$ (as discussed above) which is in special position with respect to 
-	    $F(V(I))$ (e.g. if $F(V(I)) \cap L$ is positive-dimensional). The default value 
+	    $F(V(I))$ (e.g. if $F(V(I))\cap L$ is positive-dimensional). The default value 
 	    is @TO infinity@.
             
             The option {\tt DoRefinements} specifies whether or not to refine solution points found 
@@ -1415,12 +1417,12 @@ doc ///
                 {TEX "\\bf sourceSlice: additional equations to form a zero-dimensional system (only needed if the map is not finite-to-one)"},
                 {TEX "\\bf generalCombinations: additional equations to form a zero-dimensional system (only needed if the source ideal is not a complete intersection)"},
                 TEX "\\bf imageSlice: the pullback under F of a general complementary-dimensional linear space to $F(V(I))$",
-                {TEX "\\bf witnessPointPairs: a vertical list of 2-point sequences $(p, F(p))$, where $p$ lies on $V(I)$ and $F(p)$ lies on imageSlice"},
+                {TEX "\\bf witnessPointPairs: a vertical list of 2-point sequences $(p, F(p))$, where $p$ lies on the source $V(I)$ and $F(p)$ lies on imageSlice"},
                 TEX "\\bf trace: the result of the trace test applied to witnessPointPairs"
                 }
         Text
 	    For a discussion of pseudo-witness sets, 
-	    see J. D. Hauenstein and A. J. Sommese, $Witness sets of projections$, 
+	    see J.D. Hauenstein and A.J. Sommese, $Witness sets of projections$, 
 	    Appl. Math. Comput. 217(7) (2010), 3349-3354. 
 	    
 	    The following example demonstrates the output for the 
@@ -1529,7 +1531,7 @@ doc ///
 	    the cone over $F(V(I))$. 
 	    If true, then internally the target variety is treated
             as the affine cone over its projective closure - to be precise,
-	    the map $F$ is replaced with $t[F : 1]$, where $t$ is a new variable. 
+	    the map $F$ is replaced with $t[F, 1]$, where $t$ is a new variable. 
 	    The default value is @TO false@.
 	    
 	    Since @TO numericalHilbertFunction@ works by interpolating monomials
@@ -1790,8 +1792,8 @@ A = transpose genericMatrix(R,3,3)
 I = ideal(A*transpose(A) - id_(R^3), det(A)-1)
 m = A*diagonalMatrix{lambda,lambda,mu}*transpose(A)
 F = {m_(0,0),m_(0,1),m_(0,2),m_(1,1),m_(1,2),m_(2,2)}
-p = first numericalSourceSample I
-p = point id_(CC^3)
+-- p = first numericalSourceSample I
+p = point{flatten entries diagonalMatrix {-1,-1,1} | {-1_CC, 1}}
 assert(numericalImageDim(F,I,p) == dim J)
 assert((pseudoWitnessSet(F,I,p)).degree == degree J)
 ///
