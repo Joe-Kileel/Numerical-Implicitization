@@ -1,7 +1,7 @@
 newPackage("NumericalImplicitization",
     Headline => "a package for computing numerical invariants of images of varieties",
-    Version => "1.2.0",
-    Date => "February 17, 2019",
+    Version => "2.0",
+    Date => "April 12, 2019",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen646@math.gatech.edu",
@@ -28,6 +28,7 @@ newPackage("NumericalImplicitization",
 	"NumericalInterpolationTable",
         "hilbertFunctionArgument",
         "hilbertFunctionValue",
+        "UseSLP",
         "imagePoints",
         "interpolationBasis",
         "interpolationSVD",
@@ -188,11 +189,34 @@ numericalNullity (Matrix, Boolean) := ZZ => opts -> (M, keepSVD) -> if numrows M
 numericalNullity Matrix := ZZ => opts -> M -> numericalNullity(M, false, opts)
 
 
+debug needsPackage "SLPexpressions"
+
+monomialGate = method()
+monomialGate (RingElement, List, List) := ProductGate => (m, varList, expList) -> (
+     productGate flatten apply(#gens ring m, i -> apply(expList#i, j -> varList#i))
+)
+monomialGate (RingElement, List) := ProductGate => (m, varList) -> monomialGate(m, varList, first exponents m)
+
+
+makeInterpolationMatrix = method()
+makeInterpolationMatrix (Matrix, List) := List => (mons, pts) -> (
+    X := apply(#gens ring mons, i -> inputGate ("x"|i));
+    Y := matrix{apply(flatten entries mons, m -> monomialGate(m, X))};
+    E := makeEvaluator(Y, matrix{X});
+    out := mutableMatrix(ring pts#0, numrows Y, numcols Y);
+    apply(pts/mutableMatrix, p -> (
+        evaluate(E, p, out);
+        {matrix out}
+    ))
+)
+
+
 numericalHilbertFunction = method(Options => {
-    symbol ConvertToCone => false, 
+    symbol ConvertToCone => false,
     symbol Precondition => true,
     Software => M2engine,
     symbol SVDGap => 1e5,
+    symbol UseSLP => false,
     Verbose => true})
 numericalHilbertFunction (Matrix, Ideal, List, ZZ) := NumericalInterpolationTable => opts -> (F, I, sampleImagePoints, d) -> ( --outputs a degree d interpolation table for F(V(I))
     (F, I, sampleImagePoints) = checkRings(F, I, sampleImagePoints, ConvertToCone => opts.ConvertToCone);
@@ -206,7 +230,7 @@ numericalHilbertFunction (Matrix, Ideal, List, ZZ) := NumericalInterpolationTabl
     );
     sampleImagePoints = apply(sampleImagePoints/matrix, p -> 1/norm(2,p)*p);
     if opts.Verbose then print "Creating interpolation matrix ...";
-    T = timing A := apply(sampleImagePoints, p -> {sub(allMonomials, p)});
+    T = timing A := if opts.UseSLP then makeInterpolationMatrix(allMonomials, sampleImagePoints) else apply(sampleImagePoints, p -> {sub(allMonomials, p)});
     if opts.Verbose then print("     -- used " | toString(T#0) | " seconds");
     interpolationData := numericalNullity(A, true, Precondition => opts.Precondition, SVDGap => opts.SVDGap, Verbose => opts.Verbose);
     new NumericalInterpolationTable from {
@@ -983,6 +1007,8 @@ doc ///
 	(numericalHilbertFunction, List, Ideal, ZZ)
         (numericalHilbertFunction, RingMap, Ideal, List, ZZ)
 	(numericalHilbertFunction, RingMap, Ideal, ZZ)
+        UseSLP
+        [numericalHilbertFunction, UseSLP]
     Headline
     	computes the values of the Hilbert function for the image of a variety
     Usage
@@ -1006,8 +1032,14 @@ doc ///
     Description
 	Text
 	    This method computes values of the Hilbert function of the 
-            image of a variety, by numerical interpolation. This technique 
-            circumvents the calculation of the kernel of the 
+            image of a variety, by numerical interpolation. In more detail, 
+            given a list $S$ of general points on $F(V(I))$ and a degree 
+            $d$, the method forms a matrix whose entries are the 
+            evaluations of monomials of degree $d$ at points in $S$. 
+            The kernel of this interpolation matrix gives degree $d$ 
+            equations of the image (provided the number of points in $S$
+            is at least the number of degree $d$ monomials). This 
+            technique circumvents the calculation of the kernel of the 
             associated ring map.
 
             In order to speed up computation, the list $S$ of points 
@@ -1016,6 +1048,10 @@ doc ///
             interpolation computations (which can yield a large 
             speedup over performing separate sampling instances, 
             if the ideal $I$ is not the zero ideal).
+            
+            For a further speedup, the option {\tt UseSLP} allows for 
+            the usage of @TO2{SLPexpressions, "straight-line programs"}@
+            in creating the interpolation matrix.
 
             In the following, we compute the dimension of the space of 
             quartics in the ideal of the twisted cubic and obtain the expected 
@@ -1039,7 +1075,7 @@ doc ///
             R = CC[x_(1,1)..x_(3,5)];
             F = (minors(3, genericMatrix(R, 3, 5)))_*;
             S = numericalImageSample(F, ideal 0_R, 60);
-            numericalHilbertFunction(F, ideal 0_R, S, 2)
+            numericalHilbertFunction(F, ideal 0_R, S, 2, UseSLP => true)
     SeeAlso
     	NumericalInterpolationTable
         extractImageEquations
@@ -1642,6 +1678,7 @@ R = CC[s,t]
 F = basis(3,R)
 J = monomialCurveIdeal(QQ[a_0..a_3], {1,2,3})
 assert(all(1..5, d -> (numericalHilbertFunction(F,ideal 0_R,d)).hilbertFunctionValue == numcols super basis(d,J)))
+assert(all(1..5, d -> (numericalHilbertFunction(F,ideal 0_R,d,UseSLP=>true)).hilbertFunctionValue == numcols super basis(d,J)))
 W = pseudoWitnessSet(F, ideal 0_R);
 assert(W.degree == 3)
 assert(isOnImage(W, first numericalImageSample(F,ideal 0_R)) == true)
@@ -1825,6 +1862,7 @@ check "NumericalImplicitization"
 
 -- Future:
 -- Faster evaluation at multiple points (multivariate Horner / SLP?)
+-- Alpha-certify option
 
 
 -- high degree rational normal curve
