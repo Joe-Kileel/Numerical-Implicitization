@@ -1,7 +1,7 @@
 newPackage("NumericalImplicitization",
     Headline => "a package for computing numerical invariants of images of varieties",
-    Version => "2.0",
-    Date => "April 12, 2019",
+    Version => "2.1.0",
+    Date => "May 18, 2019",
     Authors => {
         {Name => "Justin Chen",
 	 Email => "jchen646@math.gatech.edu",
@@ -13,7 +13,7 @@ newPackage("NumericalImplicitization",
     PackageImports => {},
     PackageExports => {"NumericalAlgebraicGeometry"},
     Reload => true,
-    DebuggingMode => true
+    DebuggingMode => false
     )
     export {
         "numericalSourceSample",
@@ -34,7 +34,7 @@ newPackage("NumericalImplicitization",
         "interpolationSVD",
         "interpolationMatrix",
 	"extractImageEquations",
-        "AttemptExact",
+        "AttemptZZ",
 	"numericalImageDegree",
 	"pseudoWitnessSet",
         "DoRefinements",
@@ -178,10 +178,6 @@ numericalNullity (List, Boolean) := List => opts -> (M, keepSVD) -> (
     for i from 1 to #S-1 do (
         if S#i == 0 then ( largestGap = (i, "infinity"); break; )
         else if S#(i-1)/S#i > last largestGap then ( largestGap = (i, S#(i-1)/S#i); break; );
-        -- if S#i == 0 then (
-            -- if first largestGap == #S then largestGap = (i, "infinity");
-            -- break;
-        -- ) else if S#(i-1)/S#i > last largestGap then largestGap = (i, S#(i-1)/S#i);
     );
     if keepSVD then {numcols A - first largestGap, (S, U, Vt)} else numcols A - first largestGap
 )
@@ -254,9 +250,9 @@ realPartMatrix := A -> matrix apply(entries A, r -> r/realPart)
 imPartMatrix := A -> matrix apply(entries A, r -> r/imaginaryPart)
 
 
-extractImageEquations = method(Options => {symbol Threshold => 5, symbol AttemptExact => false})
+extractImageEquations = method(Options => {symbol Threshold => 5, symbol AttemptZZ => false})
 extractImageEquations NumericalInterpolationTable := Matrix => opts -> T -> (
-    if not opts.AttemptExact then (
+    if not opts.AttemptZZ then (
         (V, mons) := (last T.interpolationSVD, T.interpolationBasis);
         clean(10.0^(-opts.Threshold), mons*sub(conjugate transpose V^{numrows V-T.hilbertFunctionValue..numrows V-1}, ring mons))
     ) else (
@@ -264,7 +260,12 @@ extractImageEquations NumericalInterpolationTable := Matrix => opts -> T -> (
         B := random(RR)*realPartMatrix A + random(RR)*imPartMatrix A;
         C := matrix apply(entries B, r -> r/(e -> lift(round(10^(1+opts.Threshold)*round(opts.Threshold, e)), ZZ)));
         D := submatrix(LLL(id_(ZZ^(numcols C)) || C), toList (0..<numcols T.interpolationBasis), toList(0..<T.hilbertFunctionValue));
-        T.interpolationBasis*sub(D, ring T.interpolationBasis)
+        E := T.interpolationBasis*sub(D, ring T.interpolationBasis);
+        val := sub(E, T.imagePoints#0);
+        if clean(10.0^(-opts.Threshold), val) != 0 then (
+            << "Warning: some of the integer equations may be inexact. Their values at a sample image point are " << val << endl;
+        );
+        E
     )
 )
 extractImageEquations (Matrix, Ideal, ZZ) := Matrix => opts -> (F, I, d) -> extractImageEquations(numericalHilbertFunction(F, I, d), opts)
@@ -594,7 +595,6 @@ isWellDefined PseudoWitnessSet := Boolean => W -> (
         symbol generalCombinations,
         symbol imageSlice,
         symbol witnessPointPairs,
-        -- symbol witnessSet,
         symbol trace
     };
     if set K =!= expectedKeys then (
@@ -681,15 +681,15 @@ isWellDefined PseudoWitnessSet := Boolean => W -> (
 )
 
 
-firstDifference = method()
-firstDifference List := List => L -> drop(L, 1) - drop(L, -1)
+-- firstDifference = method()
+-- firstDifference List := List => L -> drop(L, 1) - drop(L, -1)
 
 
-randomInts = method()
-randomInts (ZZ, ZZ) := List => (n, s) -> (
-     L := toList(0..<n);
-     apply(s, i -> ( a := L#(random(#L)); L = L - set{a}; a ))
-)
+-- randomInts = method()
+-- randomInts (ZZ, ZZ) := List => (n, s) -> (
+     -- L := toList(0..<n);
+     -- apply(s, i -> ( a := L#(random(#L)); L = L - set{a}; a ))
+-- )
 
 
 beginDocumentation()
@@ -1124,8 +1124,8 @@ doc ///
         (extractImageEquations, RingMap, Ideal, ZZ)
 	(extractImageEquations, NumericalInterpolationTable)
         [extractImageEquations, Threshold]
-        AttemptExact
-        [extractImageEquations, AttemptExact]
+        AttemptZZ
+        [extractImageEquations, AttemptZZ]
     Headline
     	finds implicit equations in a fixed degree for the image of a variety
     Usage
@@ -1148,7 +1148,7 @@ doc ///
 	Text
 	    This method finds (approximate) implicit degree $d$ equations for the image 
             of a variety, by @TO2{numericalHilbertFunction, "numerical interpolation"}@. 
-            The option {\tt AttemptExact} specifies whether to use the @TO LLL@ algorithm
+            The option {\tt AttemptZZ} specifies whether to use the @TO LLL@ algorithm
             to compute "short" equations over @TO ZZ@. The default value is @TO false@.
 
 	    If a numerical interpolation table has already been computed, then 
@@ -1160,7 +1160,7 @@ doc ///
         Example
             R = CC[s,t]
             F = basis(3, R)
-            extractImageEquations(F, ideal 0_R, 2, AttemptExact => true)
+            extractImageEquations(F, ideal 0_R, 2, AttemptZZ => true)
         Text
         
             Here is how to do the same computation symbolically.
@@ -1176,7 +1176,7 @@ doc ///
             R = CC[x_(1,1)..x_(3,5)]; I = ideal 0_R;
             F = (minors(3, genericMatrix(R, 3, 5)))_*;
 	    T = numericalHilbertFunction(F, I, 2, Verbose => false);
-	    extractImageEquations(T, AttemptExact => true)
+	    extractImageEquations(T, AttemptZZ => true)
         Text
         
     	    The option {\tt Threshold} sets the threshold for rounding the interpolation matrix. 
@@ -1581,7 +1581,7 @@ doc ///
 	    I = ideal 0_R
 	    (numericalHilbertFunction(F, I, 3, Verbose => false)).hilbertFunctionValue == 0
 	    T = numericalHilbertFunction(F, I, 3, ConvertToCone => true)
-	    extractImageEquations(T, AttemptExact => true)
+	    extractImageEquations(T, AttemptZZ => true)
     SeeAlso
         numericalHilbertFunction
 ///
@@ -1693,13 +1693,13 @@ I = ideal 0_R
 S = QQ[a_0..a_3]
 I3 = super basis(3, ker map(QQ[s,t], S, {s^4,s^3*t,s*t^3,t^4}))
 T = numericalHilbertFunction(F, I, 3);
-M = extractImageEquations(T, AttemptExact => true)
+M = extractImageEquations(T, AttemptZZ => true)
 assert(image M == image (map(ring M, S, gens ring M))(I3))
 elapsedTime PW = pseudoWitnessSet(F,I)
 assert(PW.degree == 4)
 ///
 
-TEST /// -- Grassmannian Gr(3, 5) = G(2,4)
+TEST /// -- Grassmannian Gr(3, 5) = G(P^2,P^4)
 setRandomSeed 0
 (k, n) = (3,5)
 R = CC[x_(1,1)..x_(k,n)]
@@ -1709,7 +1709,7 @@ assert(numericalImageDim(F, I) == 1 + k*(n-k))
 T = numericalHilbertFunction(F, I, 2)
 J = super basis(2, Grassmannian(k-1,n-1))
 assert(T.hilbertFunctionValue == numcols J)
-I2 = image extractImageEquations(T, AttemptExact => true)
+I2 = image extractImageEquations(T, AttemptZZ => true)
 assert(image (map(ring I2, ring J, gens ring I2))(J) == I2)
 time W = pseudoWitnessSet(F, I, Repeats => 2)
 assert(W.degree == 5)
@@ -1737,7 +1737,7 @@ PW = pseudoWitnessSet(F, ideal 0_R)
 assert(PW.degree == 4)
 assert((pseudoWitnessSet(PW.map, PW.sourceEquations, PW.witnessPointPairs_{1}, PW.imageSlice)).degree == 4)
 assert((pseudoWitnessSet(PW.map, PW.sourceEquations, PW.witnessPointPairs_{0,2}, PW.imageSlice)).degree == 4)
-I2 = ideal extractImageEquations(F, ideal 0_R, 2, AttemptExact => true)
+I2 = ideal extractImageEquations(F, ideal 0_R, 2, AttemptZZ => true)
 S = QQ[y_0..y_(binomial(d+n,d)-1)]
 RQ = QQ[x_0..x_n]
 J = ker map(RQ, S, basis(d, RQ))
@@ -1746,7 +1746,7 @@ assert((map(ring I2, S, gens ring I2))(J) == I2)
 (n1, n2) = (2, 4)
 R = CC[s_0..s_(n1), t_0..t_(n2)]
 F = (ideal(s_0..s_(n1))*ideal(t_0..t_(n2)))_*
-I2 = ideal extractImageEquations(F, ideal 0_R, 2, AttemptExact => true)
+I2 = ideal extractImageEquations(F, ideal 0_R, 2, AttemptZZ => true)
 RQ = QQ[s_0..s_(n1), t_0..t_(n2)]
 S = QQ[y_0..y_((n1+1)*(n2+1)-1)]
 J = ker map(RQ, S, (ideal(s_0..s_(n1))*ideal(t_0..t_(n2)))_*)
@@ -1783,7 +1783,7 @@ assert((pseudoWitnessSet(F, I, {PW.witnessPointPairs#0}, PW.imageSlice)).degree 
 assert((pseudoWitnessSet(F, I, PW.witnessPointPairs, PW.imageSlice)).degree == 6)
 ///
 
-TEST /// -- O(n)
+TEST /// -- Orthogonal group O(n)
 setRandomSeed 0
 n = 4
 R = CC[x_0..x_(n^2-1)]
@@ -1809,7 +1809,7 @@ assert((numericalHilbertFunction(F1, I, imagePts, 2)).hilbertFunctionValue == 0)
 assert((numericalHilbertFunction(F1, I, imagePts, 3)).hilbertFunctionValue == 1)
 F2 = (gens R)_{0,2,3}
 T = numericalHilbertFunction(F2, I, 3)
-nodalCubic = ideal extractImageEquations(T, AttemptExact => true)
+nodalCubic = ideal extractImageEquations(T, AttemptZZ => true)
 S = ring nodalCubic
 assert(nodalCubic == ideal(S_1^3 - S_0*S_2^2))
 F3 = (gens R)_{0,1,2}
@@ -1829,13 +1829,12 @@ A = transpose genericMatrix(R,3,3)
 I = ideal(A*transpose(A) - id_(R^3), det(A)-1)
 m = A*diagonalMatrix{lambda,lambda,mu}*transpose(A)
 F = {m_(0,0),m_(0,1),m_(0,2),m_(1,1),m_(1,2),m_(2,2)}
--- p = first numericalSourceSample I
 p = point{flatten entries diagonalMatrix {-1,-1,1} | {-1_CC, 1}}
 assert(numericalImageDim(F,I,p) == dim J)
 assert((pseudoWitnessSet(F,I,p)).degree == degree J)
 ///
 
-TEST ///
+TEST /// -- Numerical nullity tests
 assert(numericalNullity(matrix{{2, 1}, {0, 1e-7}}, Precondition => false) == 1)
 assert(numericalNullity(map(CC^2,CC^2,0)) == 2)
 assert(numericalNullity(id_(CC^2)) == 0)
@@ -1858,11 +1857,9 @@ viewHelp "NumericalImplicitization"
 check "NumericalImplicitization"
 
 
--- Magic numbers: 10 in fiberSlice, 20 in myTrack (for parallelization), 4 (translationMagnitude) in traceTest
+-- Defaults: 10 in monodromyLoop for affine term, 20 in myTrack (for parallelization), {0,1,3,2,-1,5,-2,6} for translationMagnitude in traceTest
 
--- Future:
--- Faster evaluation at multiple points (multivariate Horner / SLP?)
--- Alpha-certify option
+-- Future: Alpha-certify option, improvements to interpolation (using non-monomial bases, Jacobi SVD)
 
 
 -- high degree rational normal curve
@@ -1895,7 +1892,7 @@ I = ideal 0_R
 numericalImageDim(F,I)
 W = pseudoWitnessSet(F,I)
 T = numericalHilbertFunction(F,I,W.degree)
-extractImageEquations(T, AttemptExact => true)
+extractImageEquations(T, AttemptZZ => true)
 
 
 -- Undirected graphical model on 4 variables
@@ -1913,18 +1910,18 @@ I = ideal 0_R
 numericalImageDim(F, I)
 pseudoWitnessSet(F, I, Repeats => 2)
 T = numericalHilbertFunction(F, I, 2)
-extractImageEquations(T, AttemptExact => true)
+extractImageEquations(T, AttemptZZ => true)
 
 
 -- Check approximate equations:
 T = numericalHilbertFunction(F, ideal 0_R, 2);
-E = extractImageEquations(T, AttemptExact => true);
+E = extractImageEquations(T, AttemptZZ => true);
 all((toList T.imagePoints)/(p -> clean(1e-11, sub(E, toList(0..<#(p#Coordinates))/(i -> (gens ring E)#i => (p#Coordinates)#i)))), v -> v == 0)
 
 
 --------------- Implicitization Challenge + variants
 
--- (line) secant of (P^1)^n, n = 5: degree 3256
+-- (line) secant of (P^1)^n in P^31, n = 5: degree 3256
 n = 5
 R = CC[a_1..a_n,b_1..b_n,s,t];
 F = s*(terms product apply(toList(1..n), i->(1 + a_i))) + t*(terms product apply(toList(1..n), i->(1 + b_i)));
@@ -1933,7 +1930,7 @@ time W = pseudoWitnessSet(F, ideal 0_R, Repeats => 1)
 elapsedTime W = pseudoWitnessSet(F, ideal 0_R, Repeats => 1, MaxThreads => allowableThreads) 
 
 
--- Challenge: Hadamard square of line secant of (P^1)^4, degree 110, passed in 188.084 seconds
+-- Challenge: Hadamard square of line secant of (P^1)^4 in P^15, degree 110, passed in 188.084 seconds
 t = symbol t;
 n = 4
 R = CC[a_1..a_n,b_1..b_n, c_1..c_n, d_1..d_n,t_0..t_3];
@@ -1975,7 +1972,6 @@ F = vars R
 I = ideal(x_1*x_2^2 - x_3^2, x_1*x_4^2 - x_5^2)
 elapsedTime I.cache.WitnessSet = first components numericalIrreducibleDecomposition I
 time pseudoWitnessSet(F,I)
-
 F = (gens R)_(toList(0,1,2))
 I = ideal(x_1-x_3*x_4,x_2-x_3*x_5,x_4*x_5-1)
 
@@ -1988,9 +1984,9 @@ F = vars R
 p = point id_((coefficientRing R)^n)
 q = first numericalSourceSample(I, p)
 allowableThreads = 4
-elapsedTime PW = pseudoWitnessSet(F,I,p,Threshold=>3,MaxThreads=>allowableThreads, MaxPoints=>384, Endgame=>true) -- passed in 153.496 seconds
+elapsedTime PW = pseudoWitnessSet(F,I,p,Threshold=>3,MaxThreads=>allowableThreads, MaxPoints=>384) -- passed in 153.496 seconds
 
--- Dim example
+-- Dim challenge example
 jacI=(d,l,n)->(S=CC[x_(0,1)..x_(n,l),c_0..c_(binomial(l,n)-1)];R= S[X_0..X_n];
 M=for i from 1 to l list matrix{toList (x_(0,i)..x_(n,i))};
 H=for b in(for i from 0 to#subsets(M,n)-1 list for a in(subsets(M,n))_i list{a})
@@ -1998,8 +1994,6 @@ list matrix b;
 P=for t from 0 to #H-1 list for j from 0 to n list(-1)^(j)*(minors(n,H_t))_(n-j);
 F=sum for i from 0 to #P-1 list c_(i)*(sum for j from 0 to n list P_i_j*X_j)^d;
 I=transpose substitute((coefficients F)#1,S))
-
 t=13
 time F = jacI(t,t+1,2);
-time F = value first lines get "jac13.txt";
 time numericalImageDim(F, ideal 0_S)
