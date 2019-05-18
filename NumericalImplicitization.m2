@@ -258,7 +258,7 @@ extractImageEquations = method(Options => {symbol Threshold => 5, symbol Attempt
 extractImageEquations NumericalInterpolationTable := Matrix => opts -> T -> (
     if not opts.AttemptExact then (
         (V, mons) := (last T.interpolationSVD, T.interpolationBasis);
-        clean(10.0^(-opts.Threshold), mons*transpose sub(V^{numrows V-T.hilbertFunctionValue..numrows V-1}, ring mons))
+        clean(10.0^(-opts.Threshold), mons*sub(conjugate transpose V^{numrows V-T.hilbertFunctionValue..numrows V-1}, ring mons))
     ) else (
         A := T.interpolationMatrix;
         B := random(RR)*realPartMatrix A + random(RR)*imPartMatrix A;
